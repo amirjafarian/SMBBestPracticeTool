@@ -288,31 +288,94 @@ if (-not $retentionTagsLookupFailed -and $retentionTags.Count -gt 0) {
 }
 
 if ($retentionCollisions.Count -gt 0) {
-    Write-Host ''
-    Write-Host "  ! Detected $($retentionCollisions.Count) retention-tag (ComplianceTag) name collision(s) blocking deployment:" -ForegroundColor Yellow
-    foreach ($n in $retentionCollisions) {
-        $tag = $retentionTags | Where-Object { $_.Name -eq $n } | Select-Object -First 1
-        $created = if ($tag -and $tag.PSObject.Properties.Name -contains 'CreatedBy') { $tag.CreatedBy } else { '<unknown>' }
-        $tagGuid = if ($tag -and $tag.PSObject.Properties.Name -contains 'Guid') { $tag.Guid } else { '<unknown>' }
-        Write-Host "      - Retention tag '$n' (Guid: $tagGuid, created by '$created') reserves this name in the ComplianceTag scenario." -ForegroundColor Yellow
+    # An existing ACTIVE sensitivity label with the same configured Name or
+    # DisplayName means the label-creation flow will adopt/leave it in place
+    # instead of calling New-Label. In that case the retention-tag name
+    # collision is moot (we never try to allocate the colliding name in the
+    # ComplianceTag scenario), so renaming would produce a needless duplicate
+    # (e.g. a 'Public' Microsoft template already exists -> we'd otherwise
+    # create 'Public v2'). Filter the collision list down to entries that
+    # actually need a rename.
+    function Test-ActiveLabelMatch {
+        param([string] $LblName, [string] $LblDisplayName, [string] $ParentId, [array] $AllLabels)
+        foreach ($cand in $AllLabels) {
+            if (Test-LabelSoftDeleted $cand) { continue }
+            $parentMatch = if ($ParentId) { $cand.ParentId -eq $ParentId } else { -not $cand.ParentId }
+            if (-not $parentMatch) { continue }
+            if ($cand.Name -eq $LblName)              { return $cand }
+            if ($LblDisplayName -and $cand.DisplayName -eq $LblDisplayName) { return $cand }
+        }
+        return $null
     }
-    Write-Host '    Sensitivity labels and retention labels share the same server-side name space, so' -ForegroundColor Yellow
-    Write-Host "    creating a sensitivity label with this name would fail with 'ComplianceRuleAlreadyExistsInScenarioException'." -ForegroundColor Yellow
-    Write-Host '    Auto-renaming affected sensitivity labels with the next free -vN suffix for this run.' -ForegroundColor Yellow
-    Write-Host '    PurviewConfig.psd1 on disk is NOT modified. To restore the original name, remove or rename' -ForegroundColor DarkYellow
-    Write-Host '    the conflicting retention tag (e.g. via Remove-ComplianceTag) and re-run.' -ForegroundColor DarkYellow
 
+    $actionable = @()
     foreach ($lbl in $Config.Labels) {
         if ($retentionCollisions -contains $lbl.Name) {
-            $bumped = Get-FreeVersionedName -BaseName $lbl.Name -BaseDisplayName $lbl.DisplayName -AllLabels $allLabelsRaw
-            Write-Host "      $($lbl.Name) -> $($bumped.Name)" -ForegroundColor Yellow
-            $labelNameRemap[$lbl.Name] = $bumped.Name
-            $lbl.Name        = $bumped.Name
-            $lbl.DisplayName = $bumped.DisplayName
+            $adopt = Test-ActiveLabelMatch -LblName $lbl.Name -LblDisplayName $lbl.DisplayName -ParentId $null -AllLabels $allLabelsRaw
+            if ($adopt) {
+                Write-Host "    Retention tag named '$($lbl.Name)' exists, but an active sensitivity label '$($adopt.DisplayName)' (Id: $($adopt.Guid), Name: $($adopt.Name)) is already present — adopting it; no rename needed." -ForegroundColor DarkGray
+            } else {
+                $actionable += [pscustomobject]@{ Scope = 'Parent'; Lbl = $lbl; Sub = $null }
+            }
         }
         foreach ($sub in @($lbl.SubLabels)) {
             if (-not $sub) { continue }
             if ($retentionCollisions -contains $sub.Name) {
+                # ParentId is unknown at this point (label not yet created/looked up).
+                # Match on Name or DisplayName globally; correctness-wise it is safe
+                # because sub-label Names are server-globally unique compliance rules.
+                $adopt = Test-ActiveLabelMatch -LblName $sub.Name -LblDisplayName $sub.DisplayName -ParentId $null -AllLabels $allLabelsRaw
+                if (-not $adopt) {
+                    # Try matching by DisplayName under a parent we recognise.
+                    $adopt = $allLabelsRaw | Where-Object {
+                        -not (Test-LabelSoftDeleted $_) -and
+                        $_.DisplayName -eq $sub.DisplayName -and $_.ParentId
+                    } | Select-Object -First 1
+                }
+                if ($adopt) {
+                    Write-Host "    Retention tag named '$($sub.Name)' exists, but an active sensitivity sub-label '$($adopt.DisplayName)' (Id: $($adopt.Guid), Name: $($adopt.Name)) is already present — adopting it; no rename needed." -ForegroundColor DarkGray
+                } else {
+                    $actionable += [pscustomobject]@{ Scope = 'Sub'; Lbl = $lbl; Sub = $sub }
+                }
+            }
+        }
+    }
+
+    if ($actionable.Count -eq 0) {
+        Write-Host ''
+        Write-Host "  i Detected $($retentionCollisions.Count) retention-tag name collision(s), but all matching sensitivity labels already exist on the tenant — no rename needed:" -ForegroundColor DarkGray
+        foreach ($n in $retentionCollisions) {
+            $tag = $retentionTags | Where-Object { $_.Name -eq $n } | Select-Object -First 1
+            $created = if ($tag -and $tag.PSObject.Properties.Name -contains 'CreatedBy') { $tag.CreatedBy } else { '<unknown>' }
+            Write-Host "      - Retention tag '$n' (created by '$created') ignored: active sensitivity label with matching Name/DisplayName will be adopted." -ForegroundColor DarkGray
+        }
+        Write-Host ''
+    } else {
+        Write-Host ''
+        Write-Host "  ! Detected $($actionable.Count) retention-tag (ComplianceTag) name collision(s) blocking deployment:" -ForegroundColor Yellow
+        foreach ($act in $actionable) {
+            $n = if ($act.Scope -eq 'Sub') { $act.Sub.Name } else { $act.Lbl.Name }
+            $tag = $retentionTags | Where-Object { $_.Name -eq $n } | Select-Object -First 1
+            $created = if ($tag -and $tag.PSObject.Properties.Name -contains 'CreatedBy') { $tag.CreatedBy } else { '<unknown>' }
+            $tagGuid = if ($tag -and $tag.PSObject.Properties.Name -contains 'Guid') { $tag.Guid } else { '<unknown>' }
+            Write-Host "      - Retention tag '$n' (Guid: $tagGuid, created by '$created') reserves this name in the ComplianceTag scenario." -ForegroundColor Yellow
+        }
+        Write-Host '    Sensitivity labels and retention labels share the same server-side name space, so' -ForegroundColor Yellow
+        Write-Host "    creating a sensitivity label with this name would fail with 'ComplianceRuleAlreadyExistsInScenarioException'." -ForegroundColor Yellow
+        Write-Host '    No matching active sensitivity label exists to adopt, so auto-renaming with the next free -vN suffix for this run.' -ForegroundColor Yellow
+        Write-Host '    PurviewConfig.psd1 on disk is NOT modified. To restore the original name, remove or rename' -ForegroundColor DarkYellow
+        Write-Host '    the conflicting retention tag (e.g. via Remove-ComplianceTag) and re-run.' -ForegroundColor DarkYellow
+
+        foreach ($act in $actionable) {
+            if ($act.Scope -eq 'Parent') {
+                $lbl = $act.Lbl
+                $bumped = Get-FreeVersionedName -BaseName $lbl.Name -BaseDisplayName $lbl.DisplayName -AllLabels $allLabelsRaw
+                Write-Host "      $($lbl.Name) -> $($bumped.Name)" -ForegroundColor Yellow
+                $labelNameRemap[$lbl.Name] = $bumped.Name
+                $lbl.Name        = $bumped.Name
+                $lbl.DisplayName = $bumped.DisplayName
+            } else {
+                $sub = $act.Sub
                 $bumped = Get-FreeVersionedName -BaseName $sub.Name -BaseDisplayName $sub.DisplayName -AllLabels $allLabelsRaw
                 Write-Host "      $($sub.Name) -> $($bumped.Name)" -ForegroundColor Yellow
                 $labelNameRemap[$sub.Name] = $bumped.Name
@@ -320,24 +383,24 @@ if ($retentionCollisions.Count -gt 0) {
                 $sub.DisplayName = $bumped.DisplayName
             }
         }
-    }
 
-    if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabel `
-        -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabel)) {
-        $newDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabel]
-        Write-Host "      LabelPolicy.DefaultLabel: $($Config.LabelPolicy.DefaultLabel) -> $newDefault" -ForegroundColor Yellow
-        $Config.LabelPolicy.DefaultLabel = $newDefault
-    }
-    if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabelForEmail `
-        -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabelForEmail)) {
-        $newEmailDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabelForEmail]
-        Write-Host "      LabelPolicy.DefaultLabelForEmail: $($Config.LabelPolicy.DefaultLabelForEmail) -> $newEmailDefault" -ForegroundColor Yellow
-        $Config.LabelPolicy.DefaultLabelForEmail = $newEmailDefault
-    }
+        if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabel `
+            -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabel)) {
+            $newDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabel]
+            Write-Host "      LabelPolicy.DefaultLabel: $($Config.LabelPolicy.DefaultLabel) -> $newDefault" -ForegroundColor Yellow
+            $Config.LabelPolicy.DefaultLabel = $newDefault
+        }
+        if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabelForEmail `
+            -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabelForEmail)) {
+            $newEmailDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabelForEmail]
+            Write-Host "      LabelPolicy.DefaultLabelForEmail: $($Config.LabelPolicy.DefaultLabelForEmail) -> $newEmailDefault" -ForegroundColor Yellow
+            $Config.LabelPolicy.DefaultLabelForEmail = $newEmailDefault
+        }
 
-    # Surface remap so Setup-DLP.ps1 can rewrite LabelPath segments like 'Confidential/AllEmployees'.
-    $Config['LabelNameRemap'] = $labelNameRemap
-    Write-Host ''
+        # Surface remap so Setup-DLP.ps1 can rewrite LabelPath segments like 'Confidential/AllEmployees'.
+        $Config['LabelNameRemap'] = $labelNameRemap
+        Write-Host ''
+    }
 }
 
 function Get-LabelByName {
