@@ -138,6 +138,53 @@ function Resolve-LabelByPath {
         return $child
     }
 
+    # DisplayName fallback. Setup-SensitivityLabels.ps1 matches pre-existing
+    # labels by DisplayName (so a tenant where MOD Admin pre-created
+    # 'Highly Confidential' is left in place with a different internal Name).
+    # Get-Label -Identity only resolves Name/ImmutableId/Guid, so a Path that
+    # uses our configured internal Name will miss those adopted labels. Look
+    # up the configured DisplayName and search by that.
+    $cfgEntry = $null
+    if ($Config -and $Config.Labels) {
+        foreach ($_l in $Config.Labels) {
+            if ($_l.Name -eq $childName) {
+                $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
+                break
+            }
+            if ($_l.SubLabels) {
+                foreach ($_s in $_l.SubLabels) {
+                    if ($_s.Name -eq $childName) {
+                        $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
+                        break
+                    }
+                }
+                if ($cfgEntry) { break }
+            }
+        }
+    }
+    if ($cfgEntry) {
+        $tenantLabels = @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
+            -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
+                  ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
+        }
+        $byDisplay = $null
+        if ($cfgEntry.IsSub) {
+            $parentObj = $tenantLabels | Where-Object { $_.Name -eq $cfgEntry.ParentName -and -not $_.ParentId } | Select-Object -First 1
+            if (-not $parentObj) {
+                $parentObj = $tenantLabels | Where-Object { $_.DisplayName -eq $cfgEntry.ParentDisplayName -and -not $_.ParentId } | Select-Object -First 1
+            }
+            if ($parentObj) {
+                $byDisplay = $tenantLabels | Where-Object { $_.DisplayName -eq $cfgEntry.DisplayName -and $_.ParentId -eq $parentObj.Guid } | Select-Object -First 1
+            }
+        } else {
+            $byDisplay = $tenantLabels | Where-Object { $_.DisplayName -eq $cfgEntry.DisplayName -and -not $_.ParentId } | Select-Object -First 1
+        }
+        if ($byDisplay) {
+            Write-Host "    Label '$Path' resolved by DisplayName '$($cfgEntry.DisplayName)' (Id: $($byDisplay.Guid), Name: $($byDisplay.Name)) — adopted-existing label." -ForegroundColor DarkYellow
+            return $byDisplay
+        }
+    }
+
     if ($WhatIfPreference) {
         Write-Host "    What if: label '$Path' does not yet exist; using a placeholder GUID for the preview." -ForegroundColor DarkYellow
         return [pscustomobject]@{
