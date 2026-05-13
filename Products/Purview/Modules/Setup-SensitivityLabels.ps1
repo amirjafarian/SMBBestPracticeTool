@@ -251,6 +251,95 @@ if ($tombstoned.Count -gt 0) {
 # matching never returns one accidentally.
 $allLabels = @($allLabelsRaw | Where-Object { -not (Test-LabelSoftDeleted $_) })
 
+# ---------------------------------------------------------------------------
+# Retention-tag (ComplianceTag) name-collision detection + auto-rename.
+#
+# Sensitivity labels and retention labels share the SAME underlying
+# 'ComplianceTag' compliance-rule namespace server-side. A retention label
+# named 'Confidential' silently blocks New-Label -Name 'Confidential' with:
+#
+#   |Microsoft.Exchange.Management.UnifiedPolicy.ComplianceRuleAlreadyExistsInScenarioException|
+#   A compliance rule with name 'X' already exists in scenario(s) 'ComplianceTag'.
+#
+# Get-Label does NOT surface retention tags, so the tombstone check above
+# never catches these. Here we query Get-ComplianceTag and apply the same
+# -vN auto-rename logic to any colliding configured label name.
+# ---------------------------------------------------------------------------
+$retentionTags = @()
+$retentionTagsLookupFailed = $false
+try {
+    if (Get-Command Get-ComplianceTag -ErrorAction SilentlyContinue) {
+        $retentionTags = @(Get-ComplianceTag -ErrorAction Stop)
+    } else {
+        $retentionTagsLookupFailed = $true
+        Write-Warning "  Get-ComplianceTag cmdlet is not available in this session. Skipping retention-tag collision pre-flight."
+    }
+} catch {
+    $retentionTagsLookupFailed = $true
+    Write-Warning "  Could not enumerate retention tags (Get-ComplianceTag failed: $($_.Exception.Message))."
+    Write-Warning "  Skipping retention-tag collision pre-flight. If a sensitivity label fails to create with"
+    Write-Warning "  'ComplianceRuleAlreadyExistsInScenarioException', a retention tag is holding the name."
+}
+
+$retentionCollisions = @()
+if (-not $retentionTagsLookupFailed -and $retentionTags.Count -gt 0) {
+    $retentionTagNames = @($retentionTags | ForEach-Object { $_.Name })
+    $retentionCollisions = @($retentionTagNames | Where-Object { $configuredLabelNames -contains $_ })
+}
+
+if ($retentionCollisions.Count -gt 0) {
+    Write-Host ''
+    Write-Host "  ! Detected $($retentionCollisions.Count) retention-tag (ComplianceTag) name collision(s) blocking deployment:" -ForegroundColor Yellow
+    foreach ($n in $retentionCollisions) {
+        $tag = $retentionTags | Where-Object { $_.Name -eq $n } | Select-Object -First 1
+        $created = if ($tag -and $tag.PSObject.Properties.Name -contains 'CreatedBy') { $tag.CreatedBy } else { '<unknown>' }
+        $tagGuid = if ($tag -and $tag.PSObject.Properties.Name -contains 'Guid') { $tag.Guid } else { '<unknown>' }
+        Write-Host "      - Retention tag '$n' (Guid: $tagGuid, created by '$created') reserves this name in the ComplianceTag scenario." -ForegroundColor Yellow
+    }
+    Write-Host '    Sensitivity labels and retention labels share the same server-side name space, so' -ForegroundColor Yellow
+    Write-Host "    creating a sensitivity label with this name would fail with 'ComplianceRuleAlreadyExistsInScenarioException'." -ForegroundColor Yellow
+    Write-Host '    Auto-renaming affected sensitivity labels with the next free -vN suffix for this run.' -ForegroundColor Yellow
+    Write-Host '    PurviewConfig.psd1 on disk is NOT modified. To restore the original name, remove or rename' -ForegroundColor DarkYellow
+    Write-Host '    the conflicting retention tag (e.g. via Remove-ComplianceTag) and re-run.' -ForegroundColor DarkYellow
+
+    foreach ($lbl in $Config.Labels) {
+        if ($retentionCollisions -contains $lbl.Name) {
+            $bumped = Get-FreeVersionedName -BaseName $lbl.Name -BaseDisplayName $lbl.DisplayName -AllLabels $allLabelsRaw
+            Write-Host "      $($lbl.Name) -> $($bumped.Name)" -ForegroundColor Yellow
+            $labelNameRemap[$lbl.Name] = $bumped.Name
+            $lbl.Name        = $bumped.Name
+            $lbl.DisplayName = $bumped.DisplayName
+        }
+        foreach ($sub in @($lbl.SubLabels)) {
+            if (-not $sub) { continue }
+            if ($retentionCollisions -contains $sub.Name) {
+                $bumped = Get-FreeVersionedName -BaseName $sub.Name -BaseDisplayName $sub.DisplayName -AllLabels $allLabelsRaw
+                Write-Host "      $($sub.Name) -> $($bumped.Name)" -ForegroundColor Yellow
+                $labelNameRemap[$sub.Name] = $bumped.Name
+                $sub.Name        = $bumped.Name
+                $sub.DisplayName = $bumped.DisplayName
+            }
+        }
+    }
+
+    if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabel `
+        -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabel)) {
+        $newDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabel]
+        Write-Host "      LabelPolicy.DefaultLabel: $($Config.LabelPolicy.DefaultLabel) -> $newDefault" -ForegroundColor Yellow
+        $Config.LabelPolicy.DefaultLabel = $newDefault
+    }
+    if ($Config.LabelPolicy -and $Config.LabelPolicy.DefaultLabelForEmail `
+        -and $labelNameRemap.ContainsKey($Config.LabelPolicy.DefaultLabelForEmail)) {
+        $newEmailDefault = $labelNameRemap[$Config.LabelPolicy.DefaultLabelForEmail]
+        Write-Host "      LabelPolicy.DefaultLabelForEmail: $($Config.LabelPolicy.DefaultLabelForEmail) -> $newEmailDefault" -ForegroundColor Yellow
+        $Config.LabelPolicy.DefaultLabelForEmail = $newEmailDefault
+    }
+
+    # Surface remap so Setup-DLP.ps1 can rewrite LabelPath segments like 'Confidential/AllEmployees'.
+    $Config['LabelNameRemap'] = $labelNameRemap
+    Write-Host ''
+}
+
 function Get-LabelByName {
     param(
         [string] $Name,
@@ -460,6 +549,19 @@ function New-OrUpdate-Label {
                     Write-Host "    = Label '$($LabelDef.DisplayName)' already exists (Id: $existingGuid). Using existing without changes (re-run with -AdoptExisting to overwrite)." -ForegroundColor DarkGray
                     return $found
                 }
+            } elseif ($msg -match 'ComplianceRuleAlreadyExistsInScenarioException' -or
+                      $msg -match "compliance rule with name '[^']+' already exists in scenario") {
+                # Safety net: the retention-tag pre-flight didn't catch this
+                # (e.g. Get-ComplianceTag was inaccessible at startup, or the
+                # tag was created between pre-flight and now). Fail with an
+                # actionable message instead of a cryptic 500.
+                Write-Warning "    Failed to create label '$($LabelDef.Name)': the name is already reserved in the ComplianceTag scenario (a retention label is using it)."
+                Write-Warning "    Remediation:"
+                Write-Warning "      1. Inspect the colliding retention tag:"
+                Write-Warning "           Get-ComplianceTag | Where-Object Name -eq '$($LabelDef.Name)'"
+                Write-Warning "      2. Remove or rename it, OR change the Name in Products/Purview/Config/PurviewConfig.psd1, then re-run."
+                Write-Warning "    (The pre-flight retention-tag collision check would normally auto-rename this — check earlier output for a Get-ComplianceTag warning.)"
+                return $null
             } else {
                 Write-Warning "    Failed to create label '$($LabelDef.Name)': $msg"
                 return $null
