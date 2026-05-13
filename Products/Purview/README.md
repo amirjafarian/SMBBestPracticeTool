@@ -84,31 +84,20 @@ The signing-in admin needs:
 
 ### PowerShell modules
 
-<<<<<<< HEAD
-=======
 > The toolkit's `Connect-PurviewServices` helper auto-detects missing modules
 > and offers to install them from PSGallery (or installs silently when the
 > deploy script is invoked with `-AutoInstallModules`). You can also install
 > them manually beforehand:
 
->>>>>>> recovery-branch
 | Module                                                  | Required for                            | Install                                                                              |
 |---------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------|
 | `ExchangeOnlineManagement`                              | Always (EXO + IPPS)                     | `Install-Module ExchangeOnlineManagement -Scope CurrentUser`                          |
 | `Microsoft.Online.SharePoint.PowerShell`                | Tenant settings + label policy publish  | `Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser`            |
-<<<<<<< HEAD
-=======
 | `Microsoft.Graph.Authentication`                        | Only when `-EnableContainerLabels`      | `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`                    |
->>>>>>> recovery-branch
 | `Microsoft.Graph.Beta.Identity.DirectoryManagement`     | Only when `-EnableContainerLabels`      | `Install-Module Microsoft.Graph.Beta.Identity.DirectoryManagement -Scope CurrentUser` |
 
 ### PowerShell version
 
-<<<<<<< HEAD
-Tested on Windows PowerShell 5.1 and PowerShell 7.4+. The
-`Microsoft.Online.SharePoint.PowerShell` module historically required Windows
-PowerShell 5.1 — if you hit issues on PS 7, run that step from PS 5.1.
-=======
 **PowerShell 7+ (`pwsh.exe`) is required.** The deploy script hard-fails on
 Windows PowerShell 5.1 because the Exchange Online v3 REST channel and the
 Microsoft.Graph SDK rely on .NET Core APIs that PS 5.1 does not expose, which
@@ -124,7 +113,6 @@ Then run the toolkit from a `pwsh` prompt (not `powershell`). The
 `Microsoft.Online.SharePoint.PowerShell` module is loaded via
 `Import-Module -UseWindowsPowerShell` automatically when running under PS 7,
 so no separate PS 5.1 step is needed.
->>>>>>> recovery-branch
 
 ---
 
@@ -266,16 +254,10 @@ pilot tenant before rolling out.
 
 | Symptom                                                     | Cause / fix                                                                                  |
 |-------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-<<<<<<< HEAD
-| `Required PowerShell module 'X' is not installed`           | Run the matching `Install-Module` command (see prerequisites table).                          |
-| `Label '...' already exists but is not managed by toolkit`  | An existing label with the same name was found. Audit it, then re-run with `-AdoptExisting`. |
-| `Get-SPOTenant: ... not connected`                          | Wrong `-SharePointAdminUrl`, or running PS 7 with an old SPO module — try Windows PowerShell 5.1. |
-=======
 | `Required PowerShell module 'X' is not installed`           | Re-run with `-AutoInstallModules` to install missing modules automatically, or run the matching `Install-Module` command from the prerequisites table. |
 | `Connect-SPOService failed ... Fallback (UseWindowsPowerShell) also failed: ... no valid module file was found` | PS 7's `Install-Module` only installs to the PS 7 module path; the SPO module's Windows-PowerShell-proxy fallback can't see it. Open `powershell.exe` (Windows PowerShell 5.1) once and run `Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser -Force -AllowClobber`, then re-run this script from `pwsh`. |
 | `Label '...' already exists but is not managed by toolkit`  | An existing label with the same name was found. Audit it, then re-run with `-AdoptExisting`. |
 | `Get-SPOTenant: ... not connected`                          | Wrong `-SharePointAdminUrl`, or SPO module failed to load under PS 7 — verify `Microsoft.Online.SharePoint.PowerShell` is installed and re-run from a fresh `pwsh` prompt. |
->>>>>>> recovery-branch
 | Users don't see new labels in Office                        | Labels can take up to 24 h to propagate; sign out / back in to force refresh.                |
 | DLP not blocking external sends                             | Allow up to ~1 h enforcement window; verify rule is `Mode=Enable` in the Purview portal.     |
 | `Connect-IPPSSession` fails after `Connect-ExchangeOnline`  | They are separate sessions — both must succeed; modern auth + MFA both required.             |

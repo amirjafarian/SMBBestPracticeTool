@@ -334,19 +334,6 @@ if ($NeedsSharePoint) {
             if (-not $retried) {
                 $hints = @()
                 if ($isOAuthErr) {
-<<<<<<< HEAD
-                    $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator role on the customer tenant."
-                    $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser."
-                    if ($isCore) {
-                        $hints += "* PowerShell 7 was detected. Either:"
-                        $hints += "    - Update the SPO module: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                        $hints += "    - OR re-run this script in Windows PowerShell 5.1."
-                    } else {
-                        $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                    }
-                    $hints += "* You can also pre-authenticate manually first: Connect-SPOService -Url $SharePointAdminUrl"
-                }
-=======
                     $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator (or Global Administrator) role on the customer tenant."
                     $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser, and complete MFA if prompted."
                     $hints += "* You can pre-authenticate manually first, then re-run this script: Connect-SPOService -Url $SharePointAdminUrl"
@@ -367,7 +354,6 @@ if ($NeedsSharePoint) {
                     $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
                 }
 
->>>>>>> recovery-branch
                 $msg = "Connect-SPOService failed: $errMsg"
                 if ($hints) { $msg += "`nTroubleshooting:`n  " + ($hints -join "`n  ") }
                 throw $msg
