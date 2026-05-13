@@ -334,17 +334,26 @@ if ($NeedsSharePoint) {
             if (-not $retried) {
                 $hints = @()
                 if ($isOAuthErr) {
-                    $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator role on the customer tenant."
-                    $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser."
-                    if ($isCore) {
-                        $hints += "* PowerShell 7 was detected. Either:"
-                        $hints += "    - Update the SPO module: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                        $hints += "    - OR re-run this script in Windows PowerShell 5.1."
-                    } else {
-                        $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                    }
-                    $hints += "* You can also pre-authenticate manually first: Connect-SPOService -Url $SharePointAdminUrl"
+                    $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator (or Global Administrator) role on the customer tenant."
+                    $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser, and complete MFA if prompted."
+                    $hints += "* You can pre-authenticate manually first, then re-run this script: Connect-SPOService -Url $SharePointAdminUrl"
                 }
+
+                $fallbackModuleMissing = $errMsg -match 'no valid module file was found' -or `
+                                         $errMsg -match "module .* was not loaded"
+                if ($isCore -and $fallbackModuleMissing) {
+                    $hints += "* The Windows PowerShell 5.1 fallback could not find 'Microsoft.Online.SharePoint.PowerShell'."
+                    $hints += "  PS 7's 'Install-Module' installs to the PS 7 module path only; the fallback runs under PS 5.1 and needs the module in its path too."
+                    $hints += "  Fix: open Windows PowerShell 5.1 (powershell.exe) once and run:"
+                    $hints += "      Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser -Force -AllowClobber"
+                    $hints += "  Then re-run this script from pwsh."
+                } elseif ($isCore) {
+                    $hints += "* If the SPO module is outdated, update it: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
+                    $hints += "  (Do NOT downgrade to Windows PowerShell 5.1 to run this script — PS 5.1 is not supported by this toolkit.)"
+                } else {
+                    $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
+                }
+
                 $msg = "Connect-SPOService failed: $errMsg"
                 if ($hints) { $msg += "`nTroubleshooting:`n  " + ($hints -join "`n  ") }
                 throw $msg
