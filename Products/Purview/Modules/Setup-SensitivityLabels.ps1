@@ -869,7 +869,6 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
         if (-not $obj) { continue }
         $live = Get-Label -Identity $obj.Name -ErrorAction SilentlyContinue
         if (-not $live) { continue }
-        if ($live.Priority -eq 0) { continue }   # already at slot 0; Set 0 would be rejected
         if ($PSCmdlet.ShouldProcess($obj.Name, "Set priority=0 (top-level reorder)")) {
             try {
                 Invoke-WithTransientRetry -Description ("Set-Label priority=0 '$($lbl.DisplayName)'") -Action {
@@ -877,7 +876,10 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
                         -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
                 }
             } catch {
-                Write-Warning "    Priority update failed for '$($lbl.DisplayName)': $(Format-IPPSError $_)"
+                $priorityErr = Format-IPPSError $_
+                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
+                    throw "Label priority reorder failed for '$($lbl.DisplayName)': $priorityErr. Label priority may be in inconsistent state — fix the error and re-run."
+                }
             }
         }
     }
@@ -889,7 +891,6 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
         $u = $pinOrder[$i]
         $uObj = Get-Label -Identity $u.Name -ErrorAction SilentlyContinue
         if (-not $uObj) { continue }
-        if ($uObj.Priority -eq 0) { continue }
         if ($PSCmdlet.ShouldProcess($uObj.Name, "Set priority=0 (pin unmanaged label)")) {
             try {
                 Invoke-WithTransientRetry -Description ("Set-Label priority=0 (unmanaged) '$($u.DisplayName)'") -Action {
@@ -897,7 +898,10 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
                         -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
                 }
             } catch {
-                Write-Warning "    Priority update failed for unmanaged label '$($u.DisplayName)': $(Format-IPPSError $_)"
+                $priorityErr = Format-IPPSError $_
+                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
+                    throw "Label priority reorder failed for unmanaged label '$($u.DisplayName)': $priorityErr. Re-run after fixing the underlying error."
+                }
             }
         }
     }
@@ -907,33 +911,17 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
 #
 # Sub-label priorities are GLOBAL (not relative to the parent), but Purview
 # enforces that a sub-label can only move within its parent's contiguous block.
-# We don't try to *compute* the parent's first-child slot from the parent's
-# own .Priority — that's unreliable because Purview's parent .Priority
-# numbering differs from the script's expected counting whenever the tenant
-# has unmanaged labels with sub-labels, or when Purview's internal counting
-# excludes some labels. Instead we *query reality*: read the current sub-label
-# priorities for the parent, take the minimum, and push each sub-label to
-# that slot in reverse config order. This is functionally what Phase A does
-# for top-levels (push each to slot 0 in reverse), but scoped to a parent's
-# block via the existing sub-label range that Purview already enforces.
+# Derive the first child slot from the script's expected parent ordering rather
+# than current live child priorities: immediately after Phase A, IPPS can still
+# surface stale child priority values and cause us to target the wrong slot.
 foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels -or $lbl.SubLabels.Count -eq 0) { continue }
-    # Re-fetch parent to pick up any priority shift from Phase A. We need a
-    # LIVE read here (not the $allLabels cache) because Phase A's Set-Label
-    # calls mutated Purview without refreshing the cache.
     $parentMeta = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
     if (-not $parentMeta) { continue }
     $parentObj = Get-Label -Identity $parentMeta.Name -ErrorAction SilentlyContinue
     if (-not $parentObj) { continue }
 
-    # Find the actual first-slot in this parent's block from current state.
-    # All children of this parent share a contiguous block; the minimum
-    # current Priority IS the first slot Purview will accept for any child.
-    $currentSubs = @(Get-Label -ErrorAction SilentlyContinue |
-        Where-Object { $_.ParentId -eq $parentObj.Guid } |
-        Sort-Object Priority)
-    if ($currentSubs.Count -eq 0) { continue }
-    $firstChildSlot = [int]$currentSubs[0].Priority
+    $firstChildSlot = [int]$expectedParentPriority[$lbl.DisplayName] + 1
 
     # Pre-check: are the sub-labels already in config order?
     $childrenCorrect = $true
@@ -953,7 +941,6 @@ foreach ($lbl in $Config.Labels) {
         if (-not $subMeta) { continue }
         $subLive = Get-Label -Identity $subMeta.Name -ErrorAction SilentlyContinue
         if (-not $subLive) { continue }
-        if ($subLive.Priority -eq $firstChildSlot) { continue }   # already at first slot in block
         if ($PSCmdlet.ShouldProcess($subMeta.Name, "Set priority=$firstChildSlot (sub-label reorder)")) {
             try {
                 Invoke-WithTransientRetry -Description ("Set-Label priority=$firstChildSlot '$($sub.DisplayName)'") -Action {
@@ -961,7 +948,10 @@ foreach ($lbl in $Config.Labels) {
                         -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
                 }
             } catch {
-                Write-Warning "    Priority update failed for '$($sub.DisplayName)': $(Format-IPPSError $_)"
+                $priorityErr = Format-IPPSError $_
+                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
+                    Write-Warning "    Priority update failed for '$($sub.DisplayName)': $priorityErr"
+                }
             }
         }
     }
