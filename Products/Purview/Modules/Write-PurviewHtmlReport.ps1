@@ -358,7 +358,7 @@ Sensitivity labels and label policies can take up to 24 hours to fully propagate
         $next.Add(@{
             When  = 'Before go-live'
             What  = 'Decide whether retention applies in this engagement.'
-            How   = 'Retention is opt-in by default. To enable, re-run with <code>-ApplyRetention</code>. Review the configured duration and scope first - the toolkit ships a 2-year mailbox retain-then-delete default which may not be appropriate for every customer.'
+            How   = 'Retention is opt-in by default. To enable, re-run with <code>-ApplyRetention</code>. Review the configured duration and scope first - the toolkit ships a 7-year mailbox retain-then-delete default which aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but may not be appropriate for every customer.'
             Link  = 'docs/Retention-Default-Risk.md'
             Why   = 'Retention policies are notoriously hard to roll back. The Retention-Default-Risk doc covers the decision points (litigation risk, regulatory baseline, scope) you should walk through with the customer <i>before</i> enabling.'
         })

@@ -25,10 +25,13 @@ Security Best Practice Deployment" guide for Business Premium.
 > Sensitivity-label and DLP policies are tenant-wide and can affect every
 > user. Some changes can take **up to 24 hours** to fully propagate.
 
-> 🚨 **Retention default deletes mail.** The default policy deletes
-> Exchange mail older than 2 years. This is **wrong for most regulated
-> verticals** (law / accounting / healthcare / financial advisors / etc.).
-> See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md)
+> 🚨 **Retention default deletes mail at 7 years.** The default policy
+> deletes Exchange mail older than 7 years tenant-wide. This duration
+> aligns with most common SMB regulatory frameworks (ATO / IRS / SEC /
+> ASIC) but is **not appropriate for every customer** — some verticals
+> (e.g. paediatric healthcare records) require longer; some customers
+> want no automatic deletion at all. See
+> [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md)
 > before deploying into a regulated tenant.
 
 ---
@@ -40,7 +43,7 @@ Security Best Practice Deployment" guide for Business Premium.
 | 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling, label co-authoring                             |
 | 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Co-Author rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
 | 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
-| 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 2 years, then delete (measured from item creation). |
+| 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
 ### Optional add-ons
 
@@ -293,7 +296,7 @@ conversation. Full detail and mitigations are in
 | **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
 | **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set when `-EnableContainerLabels` is passed (or auto-detected on E5). | Microsoft does not officially support reverting. Treat the switch as decision-grade. |
 | **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
-| **2-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 2 years. | Wrong for most regulated verticals. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |
+| **7-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 7 years. | Aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC), but still wrong for some verticals (e.g. paediatric healthcare) and for customers who want no automatic deletion. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |
 | **DLP starts in simulation** | `DlpStartInSimulation = $true`. Telemetry only — nothing is blocked. | Has to be **explicitly promoted** at day 30 via the [`docs/DLP-Simulation-Exit-Runbook.md`](docs/DLP-Simulation-Exit-Runbook.md), or it is permanent shelfware. |
 
 ---

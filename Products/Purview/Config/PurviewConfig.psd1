@@ -362,10 +362,10 @@
 
     # ----- Retention -----
     Retention = @{
-        Name      = 'SMBTool - Exchange 2-year retention'
-        Comment   = 'Retains Exchange mailbox content for 2 years from creation, then deletes.'
-        RuleName  = 'SMBTool - Exchange 2yr Rule'
-        DurationDays = 730                # 2 years
+        Name      = 'SMBTool - Exchange 7-year retention'
+        Comment   = 'Retains Exchange mailbox content for 7 years from creation, then deletes. Aligned with common SMB regulatory record-keeping requirements (ATO/IRS/SEC/ASIC) but partners must confirm against the customer''s vertical.'
+        RuleName  = 'SMBTool - Exchange 7yr Rule'
+        DurationDays = 2555               # 7 years
         DurationDisplayHint = 'Years'
         Action    = 'KeepAndDelete'
         ExpirationDateOption = 'CreationAgeInDays'

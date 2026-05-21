@@ -42,7 +42,7 @@
       3. DLP                    — separate Exchange and SPO+OneDrive policies
                                   blocking external sharing of the
                                   Confidential\AllEmployees label
-      4. Retention              — Exchange mailbox 2-year retain-then-delete
+      4. Retention              — Exchange mailbox 7-year retain-then-delete
       5. AI governance          — OPT-IN. Microsoft 365 Copilot DLP policies
                                   (e.g. AI_054 - Block Copilot for Highly
                                   Confidential). Provisioned only when
@@ -79,8 +79,8 @@
 .PARAMETER ApplyRetention
     Provision the Exchange mailbox retention policy from
     PurviewConfig.psd1. **Opt-in** — retention does NOT run by default
-    because the shipped 2-year retain-then-delete default is destructive
-    (deletes mail older than 2 years tenant-wide) and is wrong for most
+    because the shipped 7-year retain-then-delete default is destructive
+    (deletes mail older than 7 years tenant-wide) and is wrong for some
     regulated verticals (law / accounting / healthcare / financial
     advisors / construction / real estate). The partner must consciously
     choose a duration for the customer's vertical before enabling.
@@ -383,7 +383,7 @@ $banner = @"
     [$tickTenant] Tenant settings    (audit, SPO/AIP, co-auth, PDF)
     [$tickLabels] Sensitivity labels (3 parents + 5 sub-labels, publish)
     [$tickDlp] DLP policies       (Exchange + SPO/OneDrive)
-    [$tickRetention] Retention          (Exchange 2 years — opt-in via -ApplyRetention)
+    [$tickRetention] Retention          (Exchange 7 years — opt-in via -ApplyRetention)
     [$tickAi] AI governance      (Microsoft 365 Copilot DLP — opt-in)
 
   Optional features:

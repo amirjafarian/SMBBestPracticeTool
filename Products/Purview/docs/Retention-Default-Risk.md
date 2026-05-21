@@ -1,20 +1,22 @@
 # Retention Default — Risk Note
 
 > **Read this before passing `-ApplyRetention`.** Retention is opt-in
-> as of the current toolkit version, but when you do enable it the
-> shipped default deletes Exchange mail older than 2 years and is
-> **wrong for most regulated SMBs**.
+> as of the current toolkit version. The shipped default retains
+> Exchange mail for 7 years then deletes it. That duration aligns with
+> most common SMB regulatory frameworks but is still a **tenant-wide
+> destructive policy** — you should consciously confirm it's the right
+> number for the customer before enabling.
 
 ---
 
 This page answers a simple question: **the default retention duration
-shipped in `PurviewConfig.psd1` is 2 years — when is that wrong, and
-what should you do instead?**
+shipped in `PurviewConfig.psd1` is 7 years — when is that right, when
+is it wrong, and what should you do if it's wrong?**
 
 Retention is **opt-in** as of the current toolkit version (you must
 pass `-ApplyRetention` to enable it). This page exists so that when you
-decide to opt in, you also pick the right duration for the customer's
-vertical.
+decide to opt in, you also confirm the duration is right for the
+customer's vertical.
 
 ---
 
@@ -24,8 +26,8 @@ vertical.
 
 ```powershell
 Retention = @{
-    Name         = 'SMBTool - Exchange 2-year retention'
-    DurationDays = 730           # 2 years
+    Name         = 'SMBTool - Exchange 7-year retention'
+    DurationDays = 2555          # 7 years
     Action       = 'KeepAndDelete'
     Locations    = @('Exchange')
 }
@@ -34,7 +36,7 @@ Retention = @{
 This creates a tenant-wide retention policy that:
 
 * Applies to **every mailbox** in the tenant.
-* **Deletes** any item once it is 2 years old (measured from item creation).
+* **Deletes** any item once it is 7 years old (measured from item creation).
 * Is **irreversible for non-litigation-hold mailboxes** — deleted mail
   cannot be recovered after the retention deletion sweep runs.
 * Does not affect SharePoint / OneDrive (those locations are not in the
@@ -42,33 +44,45 @@ This creates a tenant-wide retention policy that:
 
 ---
 
-## Why this is risky
+## Why 7 years is a reasonable default
 
-Two years is a sensible default for an unregulated 10-person services
-firm. It is **the wrong number** for several common SMB partner segments
-that the toolkit is otherwise well-suited to:
+Seven years aligns with the record-keeping floor for most common SMB
+verticals the toolkit serves:
 
 | Vertical | Typical regulatory retention requirement | Citation / source of obligation |
 |---|---|---|
 | **Law firms** | 7 years (and the file's life span where longer) | State bar rules of professional conduct (e.g. ABA Model Rule 1.15 in the US — varies by jurisdiction) |
-| **Accounting / tax** | 7 years (often + indefinite for audit working papers) | Local tax authority rules (e.g. ATO 5 years AU; IRS 7 years US) |
-| **Healthcare** | 6–10+ years (and longer for paediatric records) | HIPAA in US; equivalent national rules elsewhere |
-| **Financial advisors / brokers** | 5–7 years | SEC Rule 17a-4 (US); ASIC RG 78 (AU) |
-| **Construction / engineering** | 7–10 years post-completion | Statute-of-repose periods on workmanship |
-| **Real estate** | 7 years | State / territory real-estate licensing acts |
+| **Accounting / tax** | 5–7 years (often + indefinite for audit working papers) | Local tax authority rules (e.g. ATO 5 years AU; IRS 3–7 years US) |
+| **Financial advisors / brokers** | 5–7 years | SEC Rule 17a-4 (US); ASIC RG 78 (AU); Sarbanes-Oxley 7 years |
+| **General SMB / professional services** | No formal requirement; 7 years matches the broader regulatory floor and is a safe ceiling | — |
 
-The 2-year default is acceptable for **general professional services
-without a regulatory framework**, and even there it should be a
-**conscious choice**, not a side-effect of running the toolkit.
+The default was raised from 2 years to 7 years (see issue #8) to align
+with this regulatory floor. For customers in these verticals you can
+keep the default unchanged.
+
+---
+
+## When 7 years is still wrong
+
+The default is **not universally right**. Confirm it against the
+customer before deploying:
+
+| Scenario | Why 7 years is wrong | What to do |
+|---|---|---|
+| **Paediatric healthcare records** | Many jurisdictions require records to be kept until the patient reaches age of majority + N years — often 18-25+ years total | Edit `DurationDays` to a much longer value, or use `Action = 'Keep'` (no automatic deletion) |
+| **Construction / engineering with statute-of-repose exposure** | Statute-of-repose periods on workmanship can run 10–15 years post-completion | Edit `DurationDays` to match the longest applicable statute-of-repose |
+| **Customer wants no automatic deletion at all** | Some customers want a retention guarantee without a deletion event — e.g. ongoing litigation hold expected, family-business archives, professional advisors who keep client records indefinitely | Set `Action = 'Keep'` (retains for the duration, never deletes) or skip retention entirely (omit `-ApplyRetention`) |
+| **Tenant has mail older than 7 years that the customer wants to keep** | Deploying the policy starts deleting that mail immediately | Place affected mailboxes on Litigation Hold first, or skip retention until the customer has reviewed the old mail |
+| **Jurisdiction-specific shorter requirement (e.g. some EU GDPR scenarios)** | GDPR data minimisation principles may require *shorter* retention for certain personal-data categories | Edit `DurationDays` lower; consider per-data-category retention labels instead of a tenant-wide policy |
 
 ---
 
 ## What "lost mail" looks like in practice
 
-Six weeks after a 2-year-default deploy, a partner's helpdesk gets a
-ticket like:
+Six weeks after a default deploy onto a tenant that already had mail
+older than 7 years, a partner's helpdesk gets a ticket like:
 
-> "I'm trying to find the email from [client] from 2022 about [matter].
+> "I'm trying to find the email from [client] from 2017 about [matter].
 > It's not in Outlook search, not in Deleted Items, not in Recoverable
 > Items. Where is it?"
 
@@ -77,8 +91,9 @@ deleted it three weeks ago." There is no recovery short of a Microsoft
 support ticket for a backup restore from before the deletion sweep — and
 those windows are short (~14 days).
 
-For a regulated customer, the same conversation can be a **professional
-liability incident**.
+For a regulated customer this can be a **professional liability incident**
+even if the deletion was technically compliant — the customer's expectation
+matters, not just the regulator's floor.
 
 ---
 
@@ -86,15 +101,16 @@ liability incident**.
 
 Pick one of the following before deploy:
 
-### Option A — Match the vertical (recommended)
+### Option A — Match the vertical's longer requirement
 
-Edit `PurviewConfig.psd1` to match the customer's regulatory floor:
+If 7 years is too short for the customer (paediatric healthcare,
+long-life construction warranties, etc.), edit `PurviewConfig.psd1`:
 
 ```powershell
 Retention = @{
-    Name         = 'SMBTool - Exchange 7-year retention (law firm)'
-    Comment      = 'Retains Exchange mailbox content for 7 years from creation, then deletes. Aligned to state bar record-keeping requirements.'
-    DurationDays = 2555          # 7 years
+    Name         = 'SMBTool - Exchange 15-year retention (construction)'
+    Comment      = 'Retains Exchange mailbox content for 15 years from creation, then deletes. Aligned to statute-of-repose period.'
+    DurationDays = 5475          # 15 years
     Action       = 'KeepAndDelete'
     Locations    = @('Exchange')
 }
@@ -120,12 +136,12 @@ This stops nothing being deleted by *this* policy. (Users can still
 delete their own mail; the policy retains a copy in Recoverable Items
 for the duration.)
 
-### Option C — Don't enable retention yet (now the default)
+### Option C — Don't enable retention yet (default behaviour)
 
-Retention is **opt-in** as of the current toolkit version — pass
-`-ApplyRetention` to enable. Run the script without it, work the
-duration decision with the customer separately, then re-run **only**
-the retention module once the duration is agreed:
+Retention is **opt-in** — pass `-ApplyRetention` to enable. Run the
+script without it, work the duration decision with the customer
+separately, then re-run **only** the retention module once the duration
+is agreed:
 
 ```powershell
 .\Deploy-PurviewBestPractice.ps1 `
@@ -151,17 +167,18 @@ the retention module once the duration is agreed:
 
 Per-vertical presets (law / accounting / healthcare / construction /
 generic) are a planned future enhancement — see the repo issues list.
-Until they ship, **the partner owns the duration decision**. Document
-the chosen duration on the customer record before deploy, and revisit
-on every renewal.
+Until they ship, **the partner owns the duration decision** even though
+the default now aligns with the most common SMB floor. Document the
+chosen duration on the customer record before deploy, and revisit on
+every renewal.
 
 ---
 
-## What about the existing customer mail older than the new duration?
+## What about existing customer mail older than the retention duration?
 
-Deploying a 2-year retention policy onto a tenant whose oldest mail is
-6 years old will, over the following days, **start deleting all mail
-between 2 and 6 years old**.
+Deploying the 7-year retention policy onto a tenant whose oldest mail
+is 10 years old will, over the following days, **start deleting all
+mail between 7 and 10 years old**.
 
 The deletion is **not instantaneous** — the service-side retention
 sweep runs continuously and works through old mail over hours / days.
@@ -171,7 +188,8 @@ enough that customers will not notice in time to stop it.
 Mitigations:
 
 1. **Don't enable retention yet** (the default — just omit `-ApplyRetention`)
-   when the tenant has mail older than the planned retention duration.
+   when the tenant has mail older than the planned retention duration
+   that the customer wants to keep.
 2. **Place affected mailboxes on Litigation Hold** before the policy
    takes effect — Litigation Hold supersedes retention deletion.
 3. **Roll out to a single pilot mailbox first** by editing the policy

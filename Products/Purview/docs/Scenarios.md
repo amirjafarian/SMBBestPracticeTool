@@ -17,7 +17,7 @@ list of every value the script applies, see
 non-technical companion docs, see:
 
 * [`Change-Management-Playbook.md`](Change-Management-Playbook.md) — pre-deploy / day-of / day 1–5 / day-30 promote-from-simulation gate
-* [`Retention-Default-Risk.md`](Retention-Default-Risk.md) — why the 2-year default is wrong for regulated verticals
+* [`Retention-Default-Risk.md`](Retention-Default-Risk.md) — when the 7-year default is right, when it isn't, and how to override
 * [`DLP-Simulation-Exit-Runbook.md`](DLP-Simulation-Exit-Runbook.md) — how to pull the "what would have leaked" report from Activity Explorer before promoting DLP out of simulation
 
 ---
@@ -35,7 +35,7 @@ expanding when **E5 / Purview Suite** licensing is present. It covers
 | 1 | **Foundational tenant settings** | Enables audit log, label co-authoring, SharePoint label integration, PDF labels | Invisible to end users |
 | 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults; publishes 4; sets `General` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
 | 3 | **Data Loss Prevention (DLP)** | Blocks external sharing of Confidential and Highly Confidential content from Exchange and SharePoint/OneDrive (in **simulation** mode by default) | Telemetry only until the policy is promoted out of simulation |
-| 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 2 years, then deletes | Long-tail effect — mail older than 2 years starts to be removed |
+| 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 7 years, then deletes | Long-tail effect — mail older than 7 years starts to be removed |
 | 5 | **AI governance (Copilot DLP)** | Opt-in — blocks Microsoft 365 Copilot from processing Highly Confidential content | Copilot ignores HC files when surfacing answers |
 
 ---
@@ -190,8 +190,11 @@ added the same way.
 **Opt-in.** Only runs when `-ApplyRetention` is passed.
 
 > 🚨 **Retention is opt-in for a reason.** The shipped default deletes
-> Exchange mail older than 2 years tenant-wide, which is wrong for most
-> regulated verticals (law, accounting, healthcare, financial advisors,
+> Exchange mail older than 7 years tenant-wide. That duration aligns with
+> most common SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but is
+> still wrong for some verticals (paediatric healthcare, long-life
+> construction warranties) and for customers who want no automatic
+> deletion at all. See
 > construction, real estate). Before passing `-ApplyRetention`, read
 > [`docs/Retention-Default-Risk.md`](Retention-Default-Risk.md) and
 > pick the right duration for the vertical.
@@ -199,11 +202,11 @@ added the same way.
 | Setting | Default | Tunable in config |
 |---|---|---|
 | Locations | Exchange mailboxes | Add `SharePoint`, `OneDrive` |
-| Duration | 2 years | `Retention.DurationDays` |
+| Duration | 7 years | `Retention.DurationDays` |
 | Action at end of period | Delete | `Retention.Action` (`KeepAndDelete` / `Keep` / `Delete`) |
 | Trigger | Days since item creation | `Retention.ExpirationDateOption` |
 
-The policy is gentle by design — it only deletes mail older than 2 years
+The policy is gentle by design — it only deletes mail older than 7 years
 from when it was created, never anything newer. To pilot, narrow the scope
 in config to a single mailbox before the wider rollout.
 
