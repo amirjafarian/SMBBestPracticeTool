@@ -8,7 +8,7 @@
 The script handles the engineering correctly. **This playbook is what makes
 it safe in production.** Several defaults have customer-visible consequences
 the moment they take effect (silent labelling on every new document,
-2-year mail deletion, DLP blocking external sends). Without a conversation
+7-year mail deletion, DLP blocking external sends). Without a conversation
 and comms plan around them, the technical deploy is a help-desk ticket
 generator.
 
@@ -22,7 +22,7 @@ customer; you can shorten subsequent ones with experience.
 | # | Action | Owner | Output |
 |---|--------|-------|--------|
 | 1 | **Confirm tenant SKU** (Business Premium vs E5 / Purview Suite vs Copilot add-on) | Partner | Decides whether `-BPOnly` is required and whether `-ApplyAIControls` is appropriate |
-| 2 | **Confirm vertical and any regulatory framework** (law, accounting, healthcare, financial advisor, construction, real estate) | Partner + customer | Decides whether to enable retention at all (`-ApplyRetention` is opt-in) and, if enabled, what duration. The **default 2-year mail deletion is wrong** for most regulated verticals — see [Retention-Default-Risk.md](Retention-Default-Risk.md) |
+| 2 | **Confirm vertical and any regulatory framework** (law, accounting, healthcare, financial advisor, construction, real estate) | Partner + customer | Decides whether to enable retention at all (`-ApplyRetention` is opt-in) and, if enabled, what duration. The **default 7-year mail deletion** aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but may still be wrong for some verticals — see [Retention-Default-Risk.md](Retention-Default-Risk.md) |
 | 3 | **Inventory current Purview state** in the tenant — existing labels, DLP policies, retention policies | Partner | If any exist, decide between `-AdoptExisting` (toolkit takes over) or rename / archive first |
 | 4 | **Identify B2B guest exposure** — does the customer routinely invite accountants, lawyers, MSPs as guests? | Partner + customer | If yes, the `AuthenticatedUsers` encryption scope is **not** "internal-only" — see [Known sharp edges](#known-sharp-edges) |
 | 5 | **Pick a pilot mailbox / pilot site** for retention and DLP simulation review | Partner + customer | Names and UPNs go in the pre-deploy doc |
@@ -36,7 +36,7 @@ customer; you can shorten subsequent ones with experience.
 * `-ApplyRetention` — yes/no (**opt-in** — only enable if the customer has consciously chosen a retention duration appropriate for their vertical)
 * `-EnableContainerLabels` — accept the auto-detect default, or override
 * `-EnablePremiumAudit` + which mailbox(es) — yes/no
-* Retention duration (only relevant if `-ApplyRetention` is enabled) — **stick with default 2 years only if the customer has explicitly agreed** (otherwise edit `Retention.DurationDays` in `PurviewConfig.psd1`)
+* Retention duration (only relevant if `-ApplyRetention` is enabled) — **stick with default 7 years only if the customer has explicitly agreed** (otherwise edit `Retention.DurationDays` in `PurviewConfig.psd1`)
 * `EnableContentMarking` in `PurviewConfig.psd1` — leave `$false` for the initial deploy; flip to `$true` after the day-30 review
 
 ---
@@ -166,7 +166,7 @@ planned) before relying on Endpoint DLP for compliance reporting. The
 Purview portal → Settings → Device onboarding page lists onboarded
 devices.
 
-### 5. 2-year retention default deletes mail
+### 5. 7-year retention default deletes mail at the 7-year mark
 
 See [Retention-Default-Risk.md](Retention-Default-Risk.md) — this is the
 biggest single bear-trap in the default config.

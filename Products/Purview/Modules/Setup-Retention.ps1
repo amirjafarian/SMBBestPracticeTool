@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Creates a Microsoft Purview retention policy for Exchange mailboxes
-    (default: 2 years, retain-then-delete).
+    (default: 7 years, retain-then-delete).
 
 .DESCRIPTION
     Implements Priority 2 from the Microsoft 365 Business Premium Data Security
