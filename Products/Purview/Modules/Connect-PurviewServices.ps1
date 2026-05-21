@@ -302,28 +302,12 @@ function Ensure-RequiredModule {
         Write-Host "        If install fails with an access-denied error, re-run PowerShell as Administrator." -ForegroundColor DarkGray
     }
 
-    $psg = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue
-    $restoreUntrusted = $false
-    if ($psg -and $psg.InstallationPolicy -ne 'Trusted') {
-        try {
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            $restoreUntrusted = $true
-        } catch { }
-    }
-
     Write-Host "Installing '$Name' (Scope: CurrentUser)..." -ForegroundColor Cyan
     $installError = $null
     try {
-        try {
-            Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-        } catch {
-            $installError = $_
-        }
-    } finally {
-        # Restore PSGallery trust policy even if Install-Module threw or was Ctrl+C'd.
-        if ($restoreUntrusted) {
-            try { Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted -ErrorAction SilentlyContinue } catch { }
-        }
+        Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+    } catch {
+        $installError = $_
     }
 
     if ($installError) {
