@@ -490,10 +490,13 @@ function Get-TenantPurviewLicenseTier {
     #     Select-Object skuPartNumber, skuId
     $e5Sku = @(
         # M365 E5 (full bundle, includes Teams)
-        'SPE_E5','SPE_E5_NOPSTNCONF',
+        'SPE_E5','SPE_E5_NOPSTNCONF','SPE_E5_CALLINGMINUTES',
+        'SPE_E5_USGOV_GCCHIGH',
         # M365 E5 no-Teams variants (EU unbundling, May 2024+).
         # Teams must be licensed separately via 'Microsoft_Teams_Enterprise_New'.
         'Microsoft_365_E5_(no_Teams)','Microsoft_365_E5_no_Teams','SPE_E5_NOPSTNCONF_no_Teams',
+        'Microsoft_365_E5_EEA_(no_Teams)_with_Calling_Minutes',
+        'Microsoft_365_E5_EEA_(no_Teams)_without_Audio_Conferencing',
         # Office 365 E5
         'ENTERPRISEPREMIUM','ENTERPRISEPREMIUM_NOPSTNCONF',
         # Compliance / Security add-ons (each includes the IPPS container-label rights)
@@ -502,6 +505,10 @@ function Get-TenantPurviewLicenseTier {
         'M365_E5_SUITE_COMPONENTS',
         'Microsoft_Purview_Suite',
         'INFORMATION_PROTECTION_AND_GOVERNANCE',
+        'PURVIEW_SUITE_FOR_BUSINESS_PREMIUM',
+        'PURVIEW_SUITE_FOR_BUSINESS_PREMIUM_NEW',
+        'DEFENDER_AND_PURVIEW_SUITES_FOR_BUSINESS_PREMIUM',
+        'DEFENDER_AND_PURVIEW_SUITES_FOR_BUSINESS_PREMIUM_NEW',
         # Education A5 (compliance feature parity with E5)
         'M365EDU_A5_FACULTY','M365EDU_A5_STUDENT','M365EDU_A5_STUUSEBNFT'
     )
@@ -512,9 +519,16 @@ function Get-TenantPurviewLicenseTier {
         return $result
     }
 
-    if ($partNumbers -contains 'SPB' -or $partNumbers -contains 'BUSINESS_PREMIUM') {
+    $bpSku = @(
+        'SPB','BUSINESS_PREMIUM',
+        'Microsoft_365_ Business_ Premium_(no Teams)',
+        'Office_365_w/o_Teams_Bundle_Business_Premium',
+        'Microsoft_365_Business_Premium_Donation_(Non_Profit_Pricing)'
+    )
+    $bpMatched = @($partNumbers | Where-Object { $_ -in $bpSku })
+    if ($bpMatched.Count -gt 0) {
         $result.Tier = 'BusinessPremium'
-        $result.PartNumbers = @($partNumbers | Where-Object { $_ -in 'SPB','BUSINESS_PREMIUM' })
+        $result.PartNumbers = $bpMatched
         return $result
     }
 

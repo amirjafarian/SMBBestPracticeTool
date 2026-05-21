@@ -300,6 +300,7 @@ foreach ($cfg in $Config.DlpPolicies) {
         Name    = $cfg.Name
         Comment = "$tag $($cfg.Comment)"
     }
+    $skipPolicy = $false
     switch ($cfg.Workload) {
         'Exchange' {
             $policyArgs['ExchangeLocation'] = 'All'
@@ -309,6 +310,13 @@ foreach ($cfg in $Config.DlpPolicies) {
             $policyArgs['OneDriveLocation']   = 'All'
         }
         'Endpoint' {
+            $endpointCmd = Get-Command New-DlpCompliancePolicy -ErrorAction SilentlyContinue
+            if (-not $endpointCmd -or -not $endpointCmd.Parameters.ContainsKey('EndpointDlpLocation')) {
+                Write-Warning "Skipping '$($cfg.Name)' — Endpoint DLP not available in this IPPS session (required capability/parameter missing)."
+                $skipPolicy = $true
+                break
+            }
+
             # Endpoint DLP scope is the device. 'All' covers every onboarded
             # device in the tenant; narrow with EndpointDlpLocationException
             # if needed (not currently exposed in PurviewConfig).
@@ -316,6 +324,8 @@ foreach ($cfg in $Config.DlpPolicies) {
         }
         default { throw "Unknown DLP workload: $($cfg.Workload)" }
     }
+
+    if ($skipPolicy) { continue }
 
     if (-not $existing) {
         if ($PSCmdlet.ShouldProcess($cfg.Name, "New-DlpCompliancePolicy (-Mode $desiredMode)")) {
