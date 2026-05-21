@@ -273,14 +273,15 @@ VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, PRINT, EXTRACT, REPLY, REPLYALL,
 FORWARD, OBJMODEL
 ```
 
-This bundle equates to **Co-Author** in the Microsoft documentation. Because
-the identity is `AuthenticatedUsers`, **only authenticated users in the
-customer tenant can open these files** — meeting the deck's "internal-only"
-requirement.
+This bundle equates to **Co-Author** in the Microsoft documentation. The
+identity `AuthenticatedUsers` includes signed-in internal users plus B2B
+guests, social/MSA accounts, and one-time-passcode (OTP) users — so it is
+**not an internal-only scope**.
 
-Want a different protection scope (e.g. specific group, partner domain)?
-Edit `EncryptionRightsDefinitions` in `PurviewConfig.psd1`. Validate in a
-pilot tenant before rolling out.
+If you need an internal-employees-only scope, replace `AuthenticatedUsers` in
+`EncryptionRightsDefinitions` / `EncryptionRightsDefinitionsCoAuth` with a
+Microsoft 365 group whose dynamic membership is scoped to
+`user.userType -eq "Member"`. Validate in a pilot tenant before rolling out.
 
 ---
 
