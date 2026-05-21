@@ -13,7 +13,12 @@ This page answers three questions:
 
 For step-by-step run instructions, see [`README.md`](../README.md). For the
 list of every value the script applies, see
-[`Config/PurviewConfig.psd1`](../Config/PurviewConfig.psd1).
+[`Config/PurviewConfig.psd1`](../Config/PurviewConfig.psd1). For the
+non-technical companion docs, see:
+
+* [`Change-Management-Playbook.md`](Change-Management-Playbook.md) — pre-deploy / day-of / day 1–5 / day-30 promote-from-simulation gate
+* [`Retention-Default-Risk.md`](Retention-Default-Risk.md) — why the 2-year default is wrong for regulated verticals
+* [`DLP-Simulation-Exit-Runbook.md`](DLP-Simulation-Exit-Runbook.md) — how to pull the "what would have leaked" report from Activity Explorer before promoting DLP out of simulation
 
 ---
 
@@ -30,7 +35,7 @@ expanding when **E5 / Purview Suite** licensing is present. It covers
 | 1 | **Foundational tenant settings** | Enables audit log, label co-authoring, SharePoint label integration, PDF labels | Invisible to end users |
 | 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults; publishes 4; sets `General` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
 | 3 | **Data Loss Prevention (DLP)** | Blocks external sharing of Confidential and Highly Confidential content from Exchange and SharePoint/OneDrive (in **simulation** mode by default) | Telemetry only until the policy is promoted out of simulation |
-| 4 | **Retention** | Keeps Exchange mailbox content for 2 years, then deletes | Long-tail effect — mail older than 2 years starts to be removed |
+| 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 2 years, then deletes | Long-tail effect — mail older than 2 years starts to be removed |
 | 5 | **AI governance (Copilot DLP)** | Opt-in — blocks Microsoft 365 Copilot from processing Highly Confidential content | Copilot ignores HC files when surfacing answers |
 
 ---
@@ -182,7 +187,14 @@ added the same way.
 ## Scenario 4 — Retention
 
 **Module:** [`Setup-Retention.ps1`](../Modules/Setup-Retention.ps1)
-**Always runs unless `-SkipRetention` is passed.**
+**Opt-in.** Only runs when `-ApplyRetention` is passed.
+
+> 🚨 **Retention is opt-in for a reason.** The shipped default deletes
+> Exchange mail older than 2 years tenant-wide, which is wrong for most
+> regulated verticals (law, accounting, healthcare, financial advisors,
+> construction, real estate). Before passing `-ApplyRetention`, read
+> [`docs/Retention-Default-Risk.md`](Retention-Default-Risk.md) and
+> pick the right duration for the vertical.
 
 | Setting | Default | Tunable in config |
 |---|---|---|
@@ -306,7 +318,7 @@ For the long-form Microsoft Purview guide, see
 | Add Microsoft 365 Copilot guardrail | `-ApplyAIControls` |
 | Customer has E5 + wants container labels | *(auto-enabled — no flag needed)* |
 | Update labels / DLP that already exist (not toolkit-created) | `-AdoptExisting` |
-| Re-deploy only DLP after fixing config | `-SkipTenantSettings -SkipLabels -SkipRetention` |
+| Re-deploy only DLP after fixing config | `-SkipTenantSettings -SkipLabels` (retention is opt-in already) |
 | Office co-authoring on encrypted labels | `-EnableCoAuth` |
 | Roll back everything | Run [`Tests/Invoke-PurviewCleanup.ps1`](../../../Tests/Invoke-PurviewCleanup.ps1) |
 

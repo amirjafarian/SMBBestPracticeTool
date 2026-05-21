@@ -12,10 +12,24 @@ Security Best Practice Deployment" guide for Business Premium.
 > it explains every scenario the script covers, what changes when the
 > customer's licensing changes, and what's deliberately out of scope.
 > No PowerShell expertise required.
+>
+> 📋 **About to deploy this at a customer?** Read
+> [`docs/Change-Management-Playbook.md`](docs/Change-Management-Playbook.md)
+> — the script handles the engineering correctly; the playbook is what
+> makes it safe in production (pre-deploy, day-of, day 1–5, day-30
+> promote-from-simulation gate). Pairs with
+> [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md) and
+> [`docs/DLP-Simulation-Exit-Runbook.md`](docs/DLP-Simulation-Exit-Runbook.md).
 
 > ⚠️ **Always pilot in a test tenant before applying to production.**
 > Sensitivity-label and DLP policies are tenant-wide and can affect every
 > user. Some changes can take **up to 24 hours** to fully propagate.
+
+> 🚨 **Retention default deletes mail.** The default policy deletes
+> Exchange mail older than 2 years. This is **wrong for most regulated
+> verticals** (law / accounting / healthcare / financial advisors / etc.).
+> See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md)
+> before deploying into a regulated tenant.
 
 ---
 
@@ -26,13 +40,13 @@ Security Best Practice Deployment" guide for Business Premium.
 | 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling, label co-authoring                             |
 | 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Co-Author rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
 | 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
-| 4 | **Retention**       | Exchange mailbox retention — keep 2 years, then delete (measured from item creation). |
+| 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 2 years, then delete (measured from item creation). |
 
 ### Optional add-ons
 
 | Switch                     | What it does                                                                                       | Pre-requisite                                                          |
 |----------------------------|----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| `-EnableContainerLabels`   | Sets `Group.Unified` `EnableMIPLabels=True` so labels can apply to M365 Groups, Teams, SPO sites.  | `Microsoft.Graph.Beta.Identity.DirectoryManagement` module + `Directory.ReadWrite.All` |
+| `-EnableContainerLabels`   | Sets `Group.Unified` `EnableMIPLabels=True` so labels can apply to M365 Groups, Teams, SPO sites.  | `Microsoft.Graph.Beta.Identity.DirectoryManagement` module + Graph delegated scopes `Organization.Read.All` + `Directory.ReadWrite.All` |
 | `-EnablePremiumAudit`      | Adds `SearchQueryInitiated` to the supplied mailbox(es) `AuditOwner`.                              | Microsoft 365 Audit (**Premium**) licence                              |
 | `-AdoptExisting`           | Allows updating labels / policies that already exist but were not created by this toolkit.         | Audit existing config first.                                           |
 
@@ -93,8 +107,20 @@ The signing-in admin needs:
 |---------------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------------------|
 | `ExchangeOnlineManagement`                              | Always (EXO + IPPS)                     | `Install-Module ExchangeOnlineManagement -Scope CurrentUser`                          |
 | `Microsoft.Online.SharePoint.PowerShell`                | Tenant settings + label policy publish  | `Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser`            |
-| `Microsoft.Graph.Authentication`                        | Only when `-EnableContainerLabels`      | `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`                    |
+| `Microsoft.Graph.Authentication`                        | Whenever Graph is used (license auto-detect, tenant-identity confirm, container labels) | `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`                    |
 | `Microsoft.Graph.Beta.Identity.DirectoryManagement`     | Only when `-EnableContainerLabels`      | `Install-Module Microsoft.Graph.Beta.Identity.DirectoryManagement -Scope CurrentUser` |
+
+### Microsoft Graph delegated scopes (least-privilege)
+
+The script requests only the scopes it actually needs for the run you ask for:
+
+| When Graph is used                                                | Scopes requested                                |
+|-------------------------------------------------------------------|-------------------------------------------------|
+| License auto-detect + tenant-identity confirm (always when Graph is connected) | `Organization.Read.All` *(read-only)* |
+| Container labels — `-EnableContainerLabels` passed explicitly     | `Organization.Read.All` + `Directory.ReadWrite.All` *(requested upfront in one consent)* |
+| Container labels — promoted by E5/Purview Suite auto-detect       | `Organization.Read.All` first, then `Directory.ReadWrite.All` added via a second `Connect-MgGraph` call *(no extra prompt if already consented)* |
+
+`Directory.ReadWrite.All` is the historically-consented, known-working scope on most tenants for reading `/directorySettingTemplates` and writing `/settings` where `Group.Unified.EnableMIPLabels` lives. We did experiment with the narrower `GroupSettings.ReadWrite.All` but it triggered `403 Authorization_RequestDenied` on tenants whose admins had only ever consented to `Directory.ReadWrite.All`. The license auto-detect itself (`/subscribedSkus`, `/organization`) is read-only via `Organization.Read.All`.
 
 ### PowerShell version
 
@@ -173,10 +199,10 @@ auto-derivation fails (e.g. multi-geo or unusual domain configurations):
 ### Selective deployment
 
 ```powershell
-# Just labels and DLP — skip tenant settings and retention
+# Just labels and DLP — skip tenant settings (retention is opt-in)
 .\Deploy-PurviewBestPractice.ps1 `
     -TenantAdminUpn admin@contoso.onmicrosoft.com `
-    -SkipTenantSettings -SkipRetention
+    -SkipTenantSettings
 ```
 
 ### Container labels + premium audit
@@ -222,7 +248,12 @@ The most common customisations:
   these are surfaced as `What if: ... would be created earlier in this run`
   notices with a placeholder GUID, so the preview is complete and never
   errors out. In apply mode the labels really are created in the right order.
-* `-Confirm` prompts for each high-impact change.
+* `-Confirm` is honoured by the underlying cmdlets but **does not** prompt
+  per high-impact change in the orchestrator. The toolkit is designed for
+  unattended runs (`SupportsShouldProcess` is wired with `ConfirmImpact = 'None'`,
+  and every internal call passes `-Confirm:$false`). To preview without
+  applying use `-WhatIf`; to gate the run on operator confirmation, leave
+  the preflight `y/N` prompt enabled (i.e. do **not** pass `-NonInteractive`).
 * The master script prints a preflight summary and asks for `y/N`
   confirmation before any change (skip with `-NonInteractive`).
 
@@ -247,6 +278,23 @@ requirement.
 Want a different protection scope (e.g. specific group, partner domain)?
 Edit `EncryptionRightsDefinitions` in `PurviewConfig.psd1`. Validate in a
 pilot tenant before rolling out.
+
+---
+
+## Known sharp edges (read before promoting to production)
+
+These are **not bugs**. They are correct defaults that require a customer
+conversation. Full detail and mitigations are in
+[`docs/Change-Management-Playbook.md`](docs/Change-Management-Playbook.md#known-sharp-edges).
+
+| Sharp edge | Default behaviour | Why it matters |
+|---|---|---|
+| **`AuthenticatedUsers` ≠ internal only** | The 3 encrypting labels grant rights to every authenticated user in the tenant. | B2B guests (accountants / lawyers / MSPs invited as guests) **can read protected files**. Audit the guest list first. |
+| **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
+| **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set when `-EnableContainerLabels` is passed (or auto-detected on E5). | Microsoft does not officially support reverting. Treat the switch as decision-grade. |
+| **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
+| **2-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 2 years. | Wrong for most regulated verticals. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |
+| **DLP starts in simulation** | `DlpStartInSimulation = $true`. Telemetry only — nothing is blocked. | Has to be **explicitly promoted** at day 30 via the [`docs/DLP-Simulation-Exit-Runbook.md`](docs/DLP-Simulation-Exit-Runbook.md), or it is permanent shelfware. |
 
 ---
 
@@ -297,3 +345,22 @@ Issues and PRs welcome. Please:
 
 Provided as-is, without warranty of any kind. Review and test before applying
 to production tenants. See the repository root for licence information.
+
+## Disclaimer
+
+This sample script is not supported under any Microsoft standard support
+program or service. The sample script is provided AS IS without warranty of
+any kind. Microsoft further disclaims all implied warranties including,
+without limitation, any implied warranties of merchantability or of fitness
+for a particular purpose. The entire risk arising out of the use or
+performance of the sample scripts and documentation remains with you. In no
+event shall Microsoft, its authors, or anyone else involved in the creation,
+production, or delivery of the scripts be liable for any damages whatsoever
+(including, without limitation, damages for loss of business profits,
+business interruption, loss of business information, or other pecuniary loss)
+arising out of the use of or inability to use the sample scripts or
+documentation, even if Microsoft has been advised of the possibility of such
+damages.
+
+Please do not contact Microsoft support with any issues or concerns regarding
+this script.

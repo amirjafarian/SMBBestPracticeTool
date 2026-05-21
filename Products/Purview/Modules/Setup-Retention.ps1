@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Creates a Microsoft Purview retention policy for Exchange mailboxes
@@ -31,6 +32,10 @@ param(
 $ErrorActionPreference = 'Stop'
 # Auto-confirm: this toolkit is designed for unattended/scripted runs. Use -WhatIf for dry-run.
 $ConfirmPreference   = 'None'
+
+# Shared retry helper for transient IPPS errors (502, 503, 504, 429, timeouts).
+. (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
+
 # Extract a meaningful error message from an IPPS ErrorRecord. IPPS REST cmdlets
 # sometimes leave Exception.Message empty and only populate ErrorDetails or
 # FullyQualifiedErrorId, so we walk through several properties in priority order.
@@ -98,26 +103,28 @@ foreach ($loc in $r.Locations) {
 
 if (-not $existing) {
     if ($PSCmdlet.ShouldProcess($r.Name, 'New-RetentionCompliancePolicy')) {
-        $perr = @()
-        New-RetentionCompliancePolicy @policyArgs `
-            -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-        if ($perr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("New-RetentionCompliancePolicy '$($r.Name)'") -AlreadyExistsIsSuccess -Action {
+                New-RetentionCompliancePolicy @policyArgs `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
             Write-Host "  + Created policy." -ForegroundColor Green
             $existing = Get-RetentionCompliancePolicy -Identity $r.Name -ErrorAction SilentlyContinue
-        } else {
-            Write-Warning "  Failed to create policy '$($r.Name)': $($(Format-IPPSError $perr[0]))"
+        } catch {
+            Write-Warning "  Failed to create policy '$($r.Name)': $(Format-IPPSError $_)"
             return
         }
     }
 } else {
     if ($PSCmdlet.ShouldProcess($r.Name, 'Set-RetentionCompliancePolicy (comment refresh)')) {
-        $perr = @()
-        Set-RetentionCompliancePolicy -Identity $r.Name -Comment $policyArgs.Comment `
-            -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-        if ($perr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("Set-RetentionCompliancePolicy '$($r.Name)'") -Action {
+                Set-RetentionCompliancePolicy -Identity $r.Name -Comment $policyArgs.Comment `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
             Write-Host "  ~ Updated policy comment." -ForegroundColor Yellow
-        } else {
-            Write-Warning "  Failed to update policy '$($r.Name)': $($(Format-IPPSError $perr[0]))"
+        } catch {
+            Write-Warning "  Failed to update policy '$($r.Name)': $(Format-IPPSError $_)"
         }
     }
 }
@@ -144,18 +151,20 @@ $ruleArgs = @{
 
 if (-not $existingRule) {
     if ($PSCmdlet.ShouldProcess($r.RuleName, 'New-RetentionComplianceRule')) {
-        $rerr = @()
-        New-RetentionComplianceRule @ruleArgs `
-            -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-        if ($rerr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("New-RetentionComplianceRule '$($r.RuleName)'") -AlreadyExistsIsSuccess -Action {
+                New-RetentionComplianceRule @ruleArgs `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
             Write-Host "  + Created rule." -ForegroundColor Green
-        } else {
-            Write-Warning "  Failed to create rule '$($r.RuleName)': $($(Format-IPPSError $rerr[0]))"
+        } catch {
+            Write-Warning "  Failed to create rule '$($r.RuleName)': $(Format-IPPSError $_)"
         }
     }
 } else {
     if ($existingRule.Policy -ne $r.Name) {
         Write-Warning "Rule '$($r.RuleName)' belongs to policy '$($existingRule.Policy)', not '$($r.Name)'. Skipping — retention rules cannot be moved between policies."
+        Add-RunLogEntry -Module 'Setup-Retention' -Action 'Set-RetentionComplianceRule' -Target $r.RuleName -Status 'Skipped' -Detail "Rule belongs to a different policy ('$($existingRule.Policy)'); cannot move."
     } elseif ($PSCmdlet.ShouldProcess($r.RuleName, 'Set-RetentionComplianceRule (refresh)')) {
         $setArgs = @{
             Identity                     = $r.RuleName
@@ -165,13 +174,14 @@ if (-not $existingRule) {
             RetentionComplianceAction    = $r.Action
             ExpirationDateOption         = $r.ExpirationDateOption
         }
-        $rerr = @()
-        Set-RetentionComplianceRule @setArgs `
-            -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-        if ($rerr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("Set-RetentionComplianceRule '$($r.RuleName)'") -Action {
+                Set-RetentionComplianceRule @setArgs `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
             Write-Host "  ~ Updated rule." -ForegroundColor Yellow
-        } else {
-            Write-Warning "  Failed to update rule '$($r.RuleName)': $($(Format-IPPSError $rerr[0]))"
+        } catch {
+            Write-Warning "  Failed to update rule '$($r.RuleName)': $(Format-IPPSError $_)"
         }
     }
 }

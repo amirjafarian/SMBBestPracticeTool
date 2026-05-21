@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Creates Microsoft Purview DLP policies that block external sharing of
@@ -46,6 +47,10 @@ param(
 $ErrorActionPreference = 'Stop'
 # Auto-confirm: this toolkit is designed for unattended/scripted runs. Use -WhatIf for dry-run.
 $ConfirmPreference   = 'None'
+
+# Shared retry helper for transient IPPS / Graph errors (502, 503, 504, 429, timeouts).
+. (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
+
 # Extract a meaningful error message from an IPPS ErrorRecord. IPPS REST cmdlets
 # sometimes leave Exception.Message empty and only populate ErrorDetails or
 # FullyQualifiedErrorId, so we walk through several properties in priority order.
@@ -222,7 +227,14 @@ foreach ($cfg in $Config.DlpPolicies) {
     }
 
     if ($BPOnly -and ($script:E5OnlyWorkloads -contains $cfg.Workload)) {
-        throw "DLP policy '$($cfg.Name)' targets workload '$($cfg.Workload)', which requires Microsoft 365 E5 / Purview Suite. Remove this policy from PurviewConfig.psd1 or omit -BPOnly."
+        # Soft-skip (warn + continue) instead of throwing. On a Business Premium
+        # tenant the default PurviewConfig.psd1 still ships the Endpoint DLP
+        # policy; throwing would mark the entire DLP step as FAILED and skip the
+        # Exchange + SPO/ODB policies too. Soft-skip lets the BP-eligible
+        # policies deploy normally and surfaces a single clear warning for the
+        # workload(s) we can't create.
+        Write-Warning "  Skipping DLP policy '$($cfg.Name)': workload '$($cfg.Workload)' requires Microsoft 365 E5 / Purview Suite, and -BPOnly is in effect (passed explicitly or auto-set by license detection). Remove this policy from PurviewConfig.psd1 to silence, or omit -BPOnly / -NoLicenseAutoDetect when the customer holds an E5 / Purview Suite SKU."
+        continue
     }
 
     # -------------------------------------------------------------------
@@ -307,18 +319,19 @@ foreach ($cfg in $Config.DlpPolicies) {
 
     if (-not $existing) {
         if ($PSCmdlet.ShouldProcess($cfg.Name, "New-DlpCompliancePolicy (-Mode $desiredMode)")) {
-            $perr = @()
-            New-DlpCompliancePolicy @policyArgs -Mode $desiredMode `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("New-DlpCompliancePolicy '$($cfg.Name)'") -AlreadyExistsIsSuccess -Action {
+                    New-DlpCompliancePolicy @policyArgs -Mode $desiredMode `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 if ($desiredMode -eq 'TestWithoutNotifications') {
                     Write-Host "  + Created policy in simulation mode (Mode=TestWithoutNotifications). Toggle 'Turn the policy on if it's not edited within fifteen days of simulation' in the Purview portal to auto-enable." -ForegroundColor Green
                 } else {
                     Write-Host "  + Created policy (Mode=Enable; simulation disabled by config)." -ForegroundColor Green
                 }
                 $existing = Get-DlpCompliancePolicy -Identity $cfg.Name -ErrorAction SilentlyContinue
-            } else {
-                Write-Warning "  Failed to create policy '$($cfg.Name)': $($(Format-IPPSError $perr[0]))"
+            } catch {
+                Write-Warning "  Failed to create policy '$($cfg.Name)': $(Format-IPPSError $_)"
                 continue
             }
         }
@@ -341,21 +354,24 @@ foreach ($cfg in $Config.DlpPolicies) {
         }
 
         if ($PSCmdlet.ShouldProcess($cfg.Name, 'Set-DlpCompliancePolicy (refresh)')) {
-            $perr = @()
-            Set-DlpCompliancePolicy @setPolicyArgs `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("Set-DlpCompliancePolicy '$($cfg.Name)'") -Action {
+                    Set-DlpCompliancePolicy @setPolicyArgs `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 if ($setPolicyArgs.ContainsKey('Mode')) {
                     $newMode = $setPolicyArgs['Mode']
                     Write-Host "  ~ Updated policy and flipped Mode '$currentMode' -> '$newMode' (config-driven)." -ForegroundColor Green
+                    Add-RunLogEntry -Module 'Setup-DLP' -Action 'Set-DlpCompliancePolicy (Mode flip)' -Target $cfg.Name -Status 'Updated' -Detail "Mode: $currentMode -> $newMode"
                     if ($newMode -eq 'TestWithoutNotifications') {
                         Write-Host "    Toggle 'Turn the policy on if it's not edited within fifteen days of simulation' in the Purview portal to auto-enable." -ForegroundColor DarkGray
                     }
                 } else {
                     Write-Host "  ~ Updated policy (Mode=$currentMode unchanged — already in sync with config)." -ForegroundColor Yellow
+                    Add-RunLogEntry -Module 'Setup-DLP' -Action 'Set-DlpCompliancePolicy' -Target $cfg.Name -Status 'Updated' -Detail "Mode=$currentMode unchanged (already in sync)."
                 }
-            } else {
-                Write-Warning "  Failed to update policy '$($cfg.Name)': $($(Format-IPPSError $perr[0]))"
+            } catch {
+                Write-Warning "  Failed to update policy '$($cfg.Name)': $(Format-IPPSError $_)"
             }
         }
     }
@@ -495,13 +511,14 @@ foreach ($cfg in $Config.DlpPolicies) {
 
     if (-not $existingRule) {
         if ($PSCmdlet.ShouldProcess($cfg.RuleName, 'New-DlpComplianceRule')) {
-            $rerr = @()
-            New-DlpComplianceRule @ruleArgs `
-                -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($rerr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("New-DlpComplianceRule '$($cfg.RuleName)'") -AlreadyExistsIsSuccess -Action {
+                    New-DlpComplianceRule @ruleArgs `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 Write-Host "  + Created rule." -ForegroundColor Green
-            } else {
-                Write-Warning "  Failed to create rule '$($cfg.RuleName)': $($(Format-IPPSError $rerr[0]))"
+            } catch {
+                Write-Warning "  Failed to create rule '$($cfg.RuleName)': $(Format-IPPSError $_)"
             }
         }
     } else {
@@ -532,13 +549,14 @@ foreach ($cfg in $Config.DlpPolicies) {
                     AccessScope      = $ruleArgs.AccessScope
                 }
             }
-            $rerr = @()
-            Set-DlpComplianceRule @setArgs `
-                -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($rerr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("Set-DlpComplianceRule '$($cfg.RuleName)'") -Action {
+                    Set-DlpComplianceRule @setArgs `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 Write-Host "  ~ Updated rule." -ForegroundColor Yellow
-            } else {
-                Write-Warning "  Failed to update rule '$($cfg.RuleName)': $($(Format-IPPSError $rerr[0]))"
+            } catch {
+                Write-Warning "  Failed to update rule '$($cfg.RuleName)': $(Format-IPPSError $_)"
             }
         }
     }

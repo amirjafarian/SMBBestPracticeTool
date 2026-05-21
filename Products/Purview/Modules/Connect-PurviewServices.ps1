@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Connects to all Microsoft 365 services required by the Purview Best Practice toolkit.
@@ -22,16 +23,19 @@
     UPN of the customer tenant admin (or partner GDAP admin) used for sign-in.
 
 .PARAMETER NeedsSharePoint
-    Connect to SharePoint Online. The admin URL is auto-derived from the
-    tenant's initial domain after Exchange Online is connected, unless
-    -SharePointAdminUrl is passed as an override.
+    Connect to SharePoint Online (after Exchange Online). The admin URL is
+    auto-derived using the following precedence chain:
+      1. -SharePointAdminUrl (explicit override)
+      2. -DelegatedOrganization (GDAP — tenant primary domain)
+      3. Admin UPN suffix (when *.onmicrosoft.com)
+      4. EXO Get-AcceptedDomain (final fallback)
 
 .PARAMETER SharePointAdminUrl
     Optional override for the SharePoint admin centre URL
     (e.g. https://contoso-admin.sharepoint.com). When omitted, the URL is
-    auto-derived from the tenant's initial onmicrosoft.com domain — works for
-    standard tenants. Use this parameter only when auto-derivation fails
-    (e.g. multi-geo, renamed tenants, unusual domain configurations).
+    auto-derived using the precedence chain described under -NeedsSharePoint.
+    Pass this explicitly for multi-geo, renamed tenants, or vanity-domain
+    admin UPNs where the chain cannot resolve.
 
 .PARAMETER DelegatedOrganization
     Customer tenant primary domain (e.g. contoso.onmicrosoft.com) when a partner
@@ -41,6 +45,19 @@
 .PARAMETER ConnectGraph
     Connect to Microsoft Graph (Beta). Required only when configuring container
     labels (Group.Unified EnableMIPLabels).
+
+.PARAMETER GraphScopes
+    Delegated Microsoft Graph scopes to request when -ConnectGraph is used.
+    Defaults to the read-only set 'Organization.Read.All' (sufficient for license
+    auto-detect via /subscribedSkus and tenant-identity confirm via /organization).
+    The orchestrator adds 'Directory.ReadWrite.All' on top of this only
+    when container labels (Group.Unified EnableMIPLabels) will actually be
+    written, keeping the consented privilege as narrow as the run requires.
+    NOTE: Directory.ReadWrite.All is the historically-consented, known-working
+    scope on most tenants for /directorySettingTemplates and /settings. A
+    narrower scope (GroupSettings.ReadWrite.All) was tried but produced 403
+    Authorization_RequestDenied on tenants where admins had only consented
+    Directory.ReadWrite.All historically.
 
 .PARAMETER AutoInstallModules
     When set, missing PowerShell modules are installed automatically (scope
@@ -78,7 +95,13 @@ param(
     [switch] $ConnectGraph,
 
     [Parameter()]
-    [switch] $AutoInstallModules
+    [string[]] $GraphScopes = @('Organization.Read.All'),
+
+    [Parameter()]
+    [switch] $AutoInstallModules,
+
+    [Parameter()]
+    [switch] $NonInteractive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -100,19 +123,146 @@ function Test-IsAdmin {
     }
 }
 
+function Resolve-SpoAdminUrlFromInputs {
+    [CmdletBinding()]
+    param(
+        [string] $ExplicitUrl,
+        [string] $DelegatedOrganization,
+        [string] $TenantAdminUpn
+    )
+
+    if ($ExplicitUrl) {
+        return [pscustomobject]@{ Url = $ExplicitUrl; Source = 'explicit (-SharePointAdminUrl)' }
+    }
+
+    if ($DelegatedOrganization -and $DelegatedOrganization -match '^(?<t>[A-Za-z0-9-]+)\.onmicrosoft\.com$') {
+        $prefix = $Matches.t
+        return [pscustomobject]@{
+            Url    = "https://$prefix-admin.sharepoint.com"
+            Source = "-DelegatedOrganization ($DelegatedOrganization)"
+        }
+    }
+
+    if ($TenantAdminUpn -and $TenantAdminUpn -match '@(?<t>[A-Za-z0-9-]+)\.onmicrosoft\.com$') {
+        $prefix = $Matches.t
+        return [pscustomobject]@{
+            Url    = "https://$prefix-admin.sharepoint.com"
+            Source = "admin UPN suffix ($TenantAdminUpn)"
+        }
+    }
+
+    return $null
+}
+
+function Invoke-SpoConnectWithFallback {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $SharePointAdminUrl,
+        [Parameter(Mandatory)] [string] $TenantAdminUpn
+    )
+
+    $spoConnected = $false
+    try {
+        $current = Get-SPOTenant -ErrorAction Stop
+        if ($current) { $spoConnected = $true }
+    } catch { $spoConnected = $false }
+
+    if ($spoConnected) {
+        Write-Host "SharePoint Online: existing session reused." -ForegroundColor DarkGray
+        return
+    }
+
+    $spoMod = Get-Module Microsoft.Online.SharePoint.PowerShell -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $spoMod) {
+        $spoMod = Get-Module Microsoft.Online.SharePoint.PowerShell -ListAvailable |
+            Sort-Object Version -Descending | Select-Object -First 1
+    }
+    $spoVersion = if ($spoMod -and $spoMod.Version) { $spoMod.Version.ToString() } else { 'unknown' }
+    $isCore = $PSVersionTable.PSEdition -eq 'Core'
+
+    Write-Host "Connecting to SharePoint Online ($SharePointAdminUrl)..." -ForegroundColor Cyan
+    Write-Host ("  PowerShell: {0} {1} | SPO module: {2}{3}" -f `
+        $PSVersionTable.PSEdition, $PSVersionTable.PSVersion, $spoVersion,
+        $(if ($isCore) { ' (loaded via Windows PowerShell 5.1 proxy)' } else { '' })) -ForegroundColor DarkGray
+
+    # Clear any stale/cached SPO session state before attempting a fresh
+    # connect — this avoids "No valid OAuth 2.0 authentication session
+    # exists" caused by a prior failed/expired token.
+    try { Disconnect-SPOService -ErrorAction SilentlyContinue } catch { }
+
+    try {
+        Connect-SPOService -Url $SharePointAdminUrl -ErrorAction Stop
+        return
+    } catch {
+        $errMsg = $_.Exception.Message
+
+        # ZT-pattern: detect MSAL DLL conflict — recommend a pwsh restart.
+        $spoConflict = @($_.Exception, $_.Exception.InnerException) |
+            Where-Object { $_ -is [System.MissingMethodException] -or $_ -is [System.IO.FileLoadException] } |
+            Select-Object -First 1
+        $isMsalConflict = $spoConflict -and ($spoConflict.Message -like '*Microsoft.Identity.Client*' -or $spoConflict.Message -like '*Microsoft.IdentityModel*')
+
+        # Detect "the PS 5.1 proxy couldn't find the SPO module" — happens when
+        # PS 7 has the module installed but PS 5.1 does not (PS 7's
+        # Install-Module installs to the PS 7 module path only).
+        $proxyModuleMissing = $errMsg -match 'no valid module file was found' -or `
+                              $errMsg -match 'module .* was not loaded' -or `
+                              $errMsg -match 'Could not find the module'
+
+        $hints = @()
+        if ($isMsalConflict) {
+            $hints += "* DLL conflict on Microsoft.Identity.Client. Another module loaded a conflicting MSAL into this session before SharePoint."
+            $hints += "  Fix: CLOSE this PowerShell window, open a fresh pwsh, and re-run the script. Do not import other Microsoft modules first."
+        }
+        if ($errMsg -match 'No valid OAuth') {
+            $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator (or Global Administrator) role on the customer tenant."
+            $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser, and complete MFA if prompted."
+            $hints += "* You can pre-authenticate manually first, then re-run this script: Connect-SPOService -Url $SharePointAdminUrl"
+        }
+        if ($isCore -and $proxyModuleMissing) {
+            $hints += "* The Windows PowerShell 5.1 proxy could not find 'Microsoft.Online.SharePoint.PowerShell'."
+            $hints += "  PS 7's 'Install-Module' installs to the PS 7 module path only; the proxy runs under PS 5.1 and needs the module in its path too."
+            $hints += "  Fix: open Windows PowerShell 5.1 (powershell.exe) once and run:"
+            $hints += "      Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser -Force -AllowClobber"
+            $hints += "  Then re-run this script from pwsh."
+        }
+        $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
+
+        $msg = "Connect-SPOService failed: $errMsg"
+        if ($hints) { $msg += "`nTroubleshooting:`n  " + ($hints -join "`n  ") }
+        throw $msg
+    }
+}
+
 function Ensure-RequiredModule {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string] $Name,
         [string] $RequiredCmdlet,
-        [switch] $AutoInstall
+        [switch] $AutoInstall,
+        [switch] $NonInteractive,
+        [switch] $UseWindowsPowerShellProxy
     )
+
+    # On PS Core, the Microsoft.Online.SharePoint.PowerShell module is a Windows
+    # Desktop assembly. Loading it natively into PS 7 works for delegated auth
+    # but breaks certificate-based auth and can clash with EXO's bundled
+    # Microsoft.Identity.Client.dll. The Zero Trust Assessment connect helper
+    # solves this by loading SPO via -UseWindowsPowerShell (implicit WinPS 5.1
+    # remoting) AFTER EXO is already connected. We follow the same pattern.
+    $proxy = $UseWindowsPowerShellProxy.IsPresent -and ($PSVersionTable.PSEdition -eq 'Core')
 
     $available = Get-Module -ListAvailable -Name $Name -ErrorAction SilentlyContinue
 
     if ($available) {
         try {
-            Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
+            if ($proxy) {
+                Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
+                    -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            } else {
+                Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
+            }
         } catch {
             Write-Verbose "Import-Module '$Name' failed: $($_.Exception.Message)"
         }
@@ -129,6 +279,10 @@ function Ensure-RequiredModule {
     Write-Warning "Required module '$Name' is missing or its cmdlets cannot load$(if ($RequiredCmdlet) { " ($RequiredCmdlet not found)" })."
 
     $shouldInstall = $AutoInstall.IsPresent
+    if (-not $shouldInstall -and $NonInteractive.IsPresent) {
+        $manual = "Install-Module $Name -Scope CurrentUser -Force -AllowClobber"
+        throw "Module '$Name' is required but is not installed and -NonInteractive is set (cannot prompt). Either pre-install the module or re-run with -AutoInstallModules:`n    $manual"
+    }
     if (-not $shouldInstall) {
         $resp = Read-Host "Install '$Name' from PSGallery now to the current user scope? [Y/n]"
         if ([string]::IsNullOrWhiteSpace($resp) -or $resp -match '^(y|yes)$') {
@@ -160,13 +314,16 @@ function Ensure-RequiredModule {
     Write-Host "Installing '$Name' (Scope: CurrentUser)..." -ForegroundColor Cyan
     $installError = $null
     try {
-        Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-    } catch {
-        $installError = $_
-    }
-
-    if ($restoreUntrusted) {
-        try { Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted -ErrorAction SilentlyContinue } catch { }
+        try {
+            Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+        } catch {
+            $installError = $_
+        }
+    } finally {
+        # Restore PSGallery trust policy even if Install-Module threw or was Ctrl+C'd.
+        if ($restoreUntrusted) {
+            try { Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted -ErrorAction SilentlyContinue } catch { }
+        }
     }
 
     if ($installError) {
@@ -179,7 +336,12 @@ function Ensure-RequiredModule {
     }
 
     try {
-        Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
+        if ($proxy) {
+            Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
+                -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+        } else {
+            Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
+        }
     } catch {
         throw "Module '$Name' was installed but failed to import: $($_.Exception.Message)"
     }
@@ -194,73 +356,168 @@ function Ensure-RequiredModule {
 # ---------------------------------------------------------------------------
 # Module checks (auto-install on demand)
 # ---------------------------------------------------------------------------
+# Following the Zero Trust Assessment pattern: load EXO module up front,
+# but defer the SPO module import until AFTER EXO is connected. SPO's WinPS
+# proxy import has a chance of perturbing PS 7's AppDomain — doing it AFTER
+# EXO has already loaded its MSAL is the safest order.
 Ensure-RequiredModule -Name 'ExchangeOnlineManagement' `
     -RequiredCmdlet 'Connect-ExchangeOnline' `
-    -AutoInstall:$AutoInstallModules
-
-if ($NeedsSharePoint) {
-    Ensure-RequiredModule -Name 'Microsoft.Online.SharePoint.PowerShell' `
-        -RequiredCmdlet 'Connect-SPOService' `
-        -AutoInstall:$AutoInstallModules
-}
+    -AutoInstall:$AutoInstallModules `
+    -NonInteractive:$NonInteractive
 
 if ($ConnectGraph) {
     # Connect-MgGraph / Get-MgContext live in Microsoft.Graph.Authentication.
     Ensure-RequiredModule -Name 'Microsoft.Graph.Authentication' `
         -RequiredCmdlet 'Connect-MgGraph' `
-        -AutoInstall:$AutoInstallModules
+        -AutoInstall:$AutoInstallModules `
+        -NonInteractive:$NonInteractive
     # The Beta directory management module is needed for setting Group.Unified
     # values used by container labels.
     Ensure-RequiredModule -Name 'Microsoft.Graph.Beta.Identity.DirectoryManagement' `
-        -AutoInstall:$AutoInstallModules
+        -AutoInstall:$AutoInstallModules `
+        -NonInteractive:$NonInteractive
 }
 
 # ---------------------------------------------------------------------------
-# Exchange Online
+# Exchange Online — connect FIRST
 # ---------------------------------------------------------------------------
+# Reuse an existing EXO session ONLY when it matches BOTH the target admin UPN
+# AND the GDAP delegated organisation. Without this guard, back-to-back deploys
+# against different customer tenants (or after a partner-tenant context switch)
+# silently reuse the stale session and every Set-* call runs against the WRONG
+# tenant.
 $exoConnected = $false
+$staleExo     = @()
 try {
-    $info = Get-ConnectionInformation -ErrorAction Stop |
-        Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.Name -like 'ExchangeOnline*' }
-    if ($info) { $exoConnected = $true }
+    $exoSessions = @(Get-ConnectionInformation -ErrorAction Stop |
+        Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.Name -like 'ExchangeOnline*' -and $_.ConnectionUri -notlike '*compliance.protection.outlook.com*' })
+    foreach ($s in $exoSessions) {
+        $upnOk = $s.UserPrincipalName -ieq $TenantAdminUpn
+        $delegOk = if ($DelegatedOrganization) {
+            $s.DelegatedOrganization -ieq $DelegatedOrganization
+        } else {
+            [string]::IsNullOrEmpty($s.DelegatedOrganization)
+        }
+        if ($upnOk -and $delegOk) { $exoConnected = $true }
+        else { $staleExo += $s }
+    }
 } catch { $exoConnected = $false }
 
+if ($staleExo.Count -gt 0) {
+    $targetDesc = if ($DelegatedOrganization) { "$TenantAdminUpn -> $DelegatedOrganization" } else { $TenantAdminUpn }
+    Write-Host "Discarding $($staleExo.Count) stale Exchange Online session(s) (target: $targetDesc)." -ForegroundColor DarkYellow
+    foreach ($s in $staleExo) {
+        try {
+            Disconnect-ExchangeOnline -ConnectionId $s.ConnectionId -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        } catch {
+            Write-Verbose "  Could not disconnect stale EXO session $($s.ConnectionId): $($_.Exception.Message)"
+        }
+    }
+}
+
 if ($exoConnected) {
-    Write-Host "Exchange Online: existing session reused." -ForegroundColor DarkGray
+    Write-Host "Exchange Online: existing session reused (UPN + delegated-org match)." -ForegroundColor DarkGray
 } else {
-    Write-Host "Connecting to Exchange Online as $TenantAdminUpn..." -ForegroundColor Cyan
+    $signInBanner = if ($DelegatedOrganization) { "$TenantAdminUpn (GDAP delegated: $DelegatedOrganization)" } else { $TenantAdminUpn }
+    Write-Host "Connecting to Exchange Online as $signInBanner..." -ForegroundColor Cyan
     $exoArgs = @{ UserPrincipalName = $TenantAdminUpn; ShowBanner = $false }
     if ($DelegatedOrganization) { $exoArgs['DelegatedOrganization'] = $DelegatedOrganization }
-    Connect-ExchangeOnline @exoArgs
+    try {
+        Connect-ExchangeOnline @exoArgs
+    } catch {
+        # ZT-pattern: detect MSAL DLL conflict and tell the user to restart pwsh.
+        # No script can recover from this — once a conflicting Microsoft.Identity.Client
+        # is loaded into PS 7's AppDomain it cannot be unloaded.
+        $exoConflict = @($_.Exception, $_.Exception.InnerException) |
+            Where-Object { $_ -is [System.MissingMethodException] -or $_ -is [System.IO.FileLoadException] } |
+            Select-Object -First 1
+        if ($exoConflict -and ($exoConflict.Message -like '*Microsoft.Identity.Client*' -or $exoConflict.Message -like '*Microsoft.IdentityModel*')) {
+            Write-Host ""
+            Write-Warning "DLL conflict detected ($($exoConflict.GetType().Name)) loading Exchange Online's Microsoft.Identity.Client.dll."
+            Write-Warning "This means a conflicting Microsoft.Identity.Client was loaded into this PowerShell session before Exchange Online."
+            Write-Warning "Common causes: Microsoft.Graph, PnP.PowerShell, Az.* or Microsoft.Online.SharePoint.PowerShell was imported earlier in this session."
+            Write-Warning "Fix: CLOSE this PowerShell window, open a fresh pwsh, and re-run the script. Do not import any other Microsoft modules first."
+            Write-Host ""
+        }
+        throw
+    }
 }
 
 # ---------------------------------------------------------------------------
 # Security & Compliance (IPPS) — separate connection from EXO
 # ---------------------------------------------------------------------------
+# Same tenant-match guard as EXO: a stale IPPS session for a different tenant
+# silently routes every Set-Label / Set-Dlp* call to the wrong customer.
 $ippsConnected = $false
+$staleIpps     = @()
 try {
-    $info = Get-ConnectionInformation -ErrorAction Stop |
-        Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.ConnectionUri -like '*compliance.protection.outlook.com*' }
-    if ($info) { $ippsConnected = $true }
+    $ippsSessions = @(Get-ConnectionInformation -ErrorAction Stop |
+        Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.ConnectionUri -like '*compliance.protection.outlook.com*' })
+    foreach ($s in $ippsSessions) {
+        $upnOk = $s.UserPrincipalName -ieq $TenantAdminUpn
+        $delegOk = if ($DelegatedOrganization) {
+            $s.DelegatedOrganization -ieq $DelegatedOrganization
+        } else {
+            [string]::IsNullOrEmpty($s.DelegatedOrganization)
+        }
+        if ($upnOk -and $delegOk) { $ippsConnected = $true }
+        else { $staleIpps += $s }
+    }
 } catch { $ippsConnected = $false }
 
+if ($staleIpps.Count -gt 0) {
+    $targetDesc = if ($DelegatedOrganization) { "$TenantAdminUpn -> $DelegatedOrganization" } else { $TenantAdminUpn }
+    Write-Host "Discarding $($staleIpps.Count) stale Security & Compliance (IPPS) session(s) (target: $targetDesc)." -ForegroundColor DarkYellow
+    foreach ($s in $staleIpps) {
+        try {
+            Disconnect-ExchangeOnline -ConnectionId $s.ConnectionId -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        } catch {
+            Write-Verbose "  Could not disconnect stale IPPS session $($s.ConnectionId): $($_.Exception.Message)"
+        }
+    }
+}
+
 if ($ippsConnected) {
-    Write-Host "Security & Compliance (IPPS): existing session reused." -ForegroundColor DarkGray
+    Write-Host "Security & Compliance (IPPS): existing session reused (UPN + delegated-org match)." -ForegroundColor DarkGray
 } else {
-    Write-Host "Connecting to Security & Compliance Center..." -ForegroundColor Cyan
+    $ippsBanner = if ($DelegatedOrganization) { " (GDAP delegated: $DelegatedOrganization)" } else { '' }
+    Write-Host "Connecting to Security & Compliance Center$ippsBanner..." -ForegroundColor Cyan
     $ippsArgs = @{ UserPrincipalName = $TenantAdminUpn; ShowBanner = $false }
     if ($DelegatedOrganization) { $ippsArgs['DelegatedOrganization'] = $DelegatedOrganization }
     Connect-IPPSSession @ippsArgs
 }
 
 # ---------------------------------------------------------------------------
-# SharePoint Online (with auto-derivation of admin URL)
+# SharePoint Online — module loaded LAST (via WinPS proxy) and connected LAST
 # ---------------------------------------------------------------------------
-$resolvedSpoUrl = $null
-
+# ZT-aligned pattern: Microsoft.Online.SharePoint.PowerShell is a Windows-only
+# module. On PS Core we load it via -UseWindowsPowerShell so its bundled
+# Microsoft.Identity.Client.dll never enters PS 7's AppDomain (it stays in the
+# hidden PS 5.1 sub-process). The module import happens HERE — after EXO/IPPS
+# are already connected — to guarantee EXO's own MSAL has loaded cleanly first.
+#
+# Resolver precedence for the admin URL:
+#   1. -SharePointAdminUrl
+#   2. -DelegatedOrganization (<tenant>.onmicrosoft.com)
+#   3. Admin UPN suffix (when @<tenant>.onmicrosoft.com)
+#   4. EXO Get-AcceptedDomain (final fallback — uses the EXO session above)
 if ($NeedsSharePoint) {
-    if (-not $SharePointAdminUrl) {
-        Write-Host "Resolving SharePoint admin URL from tenant initial domain..." -ForegroundColor Cyan
+    Ensure-RequiredModule -Name 'Microsoft.Online.SharePoint.PowerShell' `
+        -RequiredCmdlet 'Connect-SPOService' `
+        -AutoInstall:$AutoInstallModules `
+        -NonInteractive:$NonInteractive `
+        -UseWindowsPowerShellProxy
+
+    $resolved = Resolve-SpoAdminUrlFromInputs `
+        -ExplicitUrl $SharePointAdminUrl `
+        -DelegatedOrganization $DelegatedOrganization `
+        -TenantAdminUpn $TenantAdminUpn
+
+    if ($resolved) {
+        $SharePointAdminUrl = $resolved.Url
+        Write-Host "SharePoint admin URL resolved via $($resolved.Source): $SharePointAdminUrl" -ForegroundColor DarkGray
+    } else {
+        Write-Host "Resolving SharePoint admin URL from tenant initial domain (EXO Get-AcceptedDomain)..." -ForegroundColor Cyan
         try {
             # Get-AcceptedDomain runs in the EXO session we just connected.
             # The InitialDomain (always <tenant>.onmicrosoft.com) is the
@@ -277,128 +534,87 @@ if ($NeedsSharePoint) {
         } catch {
             throw "Could not auto-derive SharePoint admin URL: $($_.Exception.Message)`nPass -SharePointAdminUrl explicitly (e.g. https://<tenant>-admin.sharepoint.com)."
         }
-    } else {
-        Write-Host "Using supplied SharePoint admin URL: $SharePointAdminUrl" -ForegroundColor DarkGray
     }
 
-    $resolvedSpoUrl = $SharePointAdminUrl
-
-    $spoConnected = $false
-    try {
-        $current = Get-SPOTenant -ErrorAction Stop
-        # Verify the existing session is for the same tenant we want
-        if ($current) { $spoConnected = $true }
-    } catch { $spoConnected = $false }
-
-    if ($spoConnected) {
-        Write-Host "SharePoint Online: existing session reused." -ForegroundColor DarkGray
-    } else {
-        $spoMod = Get-Module Microsoft.Online.SharePoint.PowerShell -ErrorAction SilentlyContinue
-        if (-not $spoMod) {
-            $spoMod = Get-Module Microsoft.Online.SharePoint.PowerShell -ListAvailable |
-                Sort-Object Version -Descending | Select-Object -First 1
-        }
-        $spoVersion = if ($spoMod) { $spoMod.Version.ToString() } else { 'unknown' }
-        $isCore = $PSVersionTable.PSEdition -eq 'Core'
-
-        Write-Host "Connecting to SharePoint Online ($SharePointAdminUrl)..." -ForegroundColor Cyan
-        Write-Host ("  PowerShell: {0} {1} | SPO module: {2}" -f `
-            $PSVersionTable.PSEdition, $PSVersionTable.PSVersion, $spoVersion) -ForegroundColor DarkGray
-
-        # Clear any stale/cached SPO session state before attempting a fresh
-        # connect — this avoids "No valid OAuth 2.0 authentication session
-        # exists" caused by a prior failed/expired token.
-        try { Disconnect-SPOService -ErrorAction SilentlyContinue } catch { }
-
-        try {
-            Connect-SPOService -Url $SharePointAdminUrl -ErrorAction Stop
-        } catch {
-            $errMsg = $_.Exception.Message
-            $isOAuthErr = $errMsg -match 'No valid OAuth'
-
-            $retried = $false
-            if ($isOAuthErr -and $isCore) {
-                Write-Warning "Connect-SPOService failed under PowerShell 7. The SPO module's OAuth flow is unreliable on PS Core; retrying via Windows PowerShell 5.1 proxy..."
-                try {
-                    Remove-Module Microsoft.Online.SharePoint.PowerShell -Force -ErrorAction SilentlyContinue
-                    Import-Module Microsoft.Online.SharePoint.PowerShell -UseWindowsPowerShell `
-                        -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
-                    Connect-SPOService -Url $SharePointAdminUrl -ErrorAction Stop
-                    Write-Host "  Connected via Windows PowerShell proxy." -ForegroundColor Green
-                    $retried = $true
-                } catch {
-                    $errMsg = "$errMsg`nFallback (UseWindowsPowerShell) also failed: $($_.Exception.Message)"
-                }
-            }
-
-            if (-not $retried) {
-                $hints = @()
-                if ($isOAuthErr) {
-                    $hints += "* The sign-in account ($TenantAdminUpn) must hold the SharePoint Administrator (or Global Administrator) role on the customer tenant."
-                    $hints += "* Make sure the browser sign-in pop-up is allowed and not blocked by your default browser, and complete MFA if prompted."
-                    $hints += "* You can pre-authenticate manually first, then re-run this script: Connect-SPOService -Url $SharePointAdminUrl"
-                }
-
-                $fallbackModuleMissing = $errMsg -match 'no valid module file was found' -or `
-                                         $errMsg -match "module .* was not loaded"
-                if ($isCore -and $fallbackModuleMissing) {
-                    $hints += "* The Windows PowerShell 5.1 fallback could not find 'Microsoft.Online.SharePoint.PowerShell'."
-                    $hints += "  PS 7's 'Install-Module' installs to the PS 7 module path only; the fallback runs under PS 5.1 and needs the module in its path too."
-                    $hints += "  Fix: open Windows PowerShell 5.1 (powershell.exe) once and run:"
-                    $hints += "      Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser -Force -AllowClobber"
-                    $hints += "  Then re-run this script from pwsh."
-                } elseif ($isCore) {
-                    $hints += "* If the SPO module is outdated, update it: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                    $hints += "  (Do NOT downgrade to Windows PowerShell 5.1 to run this script — PS 5.1 is not supported by this toolkit.)"
-                } else {
-                    $hints += "* If your SPO module is old, run: Update-Module Microsoft.Online.SharePoint.PowerShell -Force"
-                }
-
-                $msg = "Connect-SPOService failed: $errMsg"
-                if ($hints) { $msg += "`nTroubleshooting:`n  " + ($hints -join "`n  ") }
-                throw $msg
-            }
-        }
-    }
+    Invoke-SpoConnectWithFallback -SharePointAdminUrl $SharePointAdminUrl -TenantAdminUpn $TenantAdminUpn
 }
 
 # ---------------------------------------------------------------------------
 # Microsoft Graph (Beta) — optional
 # ---------------------------------------------------------------------------
 if ($ConnectGraph) {
-    # Derive the target tenant from the admin UPN suffix. Connect-MgGraph
-    # accepts a verified domain (e.g. contoso.onmicrosoft.com) in -TenantId,
-    # which forces MSAL to authenticate against THIS tenant rather than
-    # whichever tenant happens to be cached from a prior session.
-    $targetTenantDomain = ($TenantAdminUpn -split '@')[-1]
+    # GDAP FIX: When the deploy targets a customer via GDAP (-DelegatedOrganization),
+    # the Connect-MgGraph -TenantId MUST be the CUSTOMER tenant, not the partner
+    # tenant. The previous code split the admin UPN suffix
+    # (e.g. 'partnerAdmin@fabrikam.onmicrosoft.com' -> 'fabrikam.onmicrosoft.com')
+    # and silently authed Graph into the partner tenant — so license auto-detect
+    # and container-label setup ran against the wrong tenant on every partner-led run.
+    $targetTenantDomain = if ($DelegatedOrganization) {
+        $DelegatedOrganization
+    } else {
+        ($TenantAdminUpn -split '@')[-1]
+    }
+    # Normalise scope set (drop empties / dupes, preserve order) before reuse-check.
+    $requiredScopes = @($GraphScopes | Where-Object { $_ } | Select-Object -Unique)
+    if ($requiredScopes.Count -eq 0) { $requiredScopes = @('Organization.Read.All') }
     $graphConnected = $false
     try {
         $ctx = Get-MgContext -ErrorAction Stop
-        # Reuse only when the cached session belongs to the SAME admin AND
-        # has the required scope. A stale session for a different tenant
-        # produces a "Selected user account does not exist in tenant"
-        # popup the moment any Graph cmdlet triggers an MSAL token refresh.
+        # Reuse only when the cached session belongs to the SAME admin, has the
+        # required scopes, AND (for GDAP) is authenticated against the customer
+        # tenant. A stale session for a different tenant produces a "Selected
+        # user account does not exist in tenant" popup the moment any Graph
+        # cmdlet triggers an MSAL token refresh.
+        $cachedScopes = @($ctx.Scopes)
+        $missingScopes = @($requiredScopes | Where-Object { $cachedScopes -notcontains $_ })
         if ($ctx -and `
             $ctx.Account -and ($ctx.Account -ieq $TenantAdminUpn) -and `
-            $ctx.Scopes -contains 'Directory.ReadWrite.All') {
-            $graphConnected = $true
+            $missingScopes.Count -eq 0) {
+
+            $tenantOk = $true
+            if ($DelegatedOrganization) {
+                # Confirm the cached session is actually authed against the customer
+                # tenant by listing verifiedDomains on /organization and looking for
+                # the DelegatedOrganization. Mismatch ⇒ a stale partner-tenant session.
+                try {
+                    $org = Invoke-MgGraphRequest -Method GET `
+                        -Uri 'https://graph.microsoft.com/v1.0/organization?$select=verifiedDomains' `
+                        -ErrorAction Stop
+                    $domains = @()
+                    foreach ($o in @($org.value)) {
+                        foreach ($d in @($o.verifiedDomains)) { if ($d.name) { $domains += $d.name.ToLowerInvariant() } }
+                    }
+                    $tenantOk = $domains -contains $DelegatedOrganization.ToLowerInvariant()
+                } catch { $tenantOk = $false }
+            }
+
+            if ($tenantOk) {
+                $graphConnected = $true
+            } else {
+                Write-Host "Microsoft Graph: cached session is not authed against '$DelegatedOrganization'; reconnecting." -ForegroundColor DarkYellow
+                try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+            }
         } elseif ($ctx) {
             $cachedAcct = if ($ctx.Account) { $ctx.Account } else { '(no account)' }
-            Write-Host "Microsoft Graph: discarding cached session for '$cachedAcct' (does not match '$TenantAdminUpn')." -ForegroundColor DarkYellow
+            if ($missingScopes.Count -gt 0 -and $ctx.Account -ieq $TenantAdminUpn) {
+                Write-Host "Microsoft Graph: cached session for '$cachedAcct' is missing required scopes ($($missingScopes -join ', ')); reconnecting." -ForegroundColor DarkYellow
+            } else {
+                Write-Host "Microsoft Graph: discarding cached session for '$cachedAcct' (does not match '$TenantAdminUpn' or required scopes)." -ForegroundColor DarkYellow
+            }
             try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
         }
     } catch { $graphConnected = $false }
 
     if ($graphConnected) {
-        Write-Host "Microsoft Graph: existing session reused." -ForegroundColor DarkGray
+        Write-Host "Microsoft Graph: existing session reused (account + tenant + scopes match)." -ForegroundColor DarkGray
     } else {
-        Write-Host "Connecting to Microsoft Graph (Beta) for tenant $targetTenantDomain..." -ForegroundColor Cyan
-        Connect-MgGraph -TenantId $targetTenantDomain -Scopes 'Directory.ReadWrite.All' -NoWelcome
+        Write-Host ("Connecting to Microsoft Graph (Beta) for tenant {0} with scopes: {1}..." -f $targetTenantDomain, ($requiredScopes -join ', ')) -ForegroundColor Cyan
+        Connect-MgGraph -TenantId $targetTenantDomain -Scopes $requiredScopes -NoWelcome
     }
 }
 
 Write-Host "All required services connected." -ForegroundColor Green
 
 [pscustomobject]@{
-    SharePointAdminUrl = $resolvedSpoUrl
+    SharePointAdminUrl = if ($NeedsSharePoint) { $SharePointAdminUrl } else { $null }
 }

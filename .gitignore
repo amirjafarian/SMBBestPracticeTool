@@ -1,0 +1,5 @@
+Feedback/
+
+# Per-run HTML/JSON deployment reports written next to the orchestrator
+Products/**/Deploy-*-Report-*.html
+Products/**/Deploy-*-Report-*.json

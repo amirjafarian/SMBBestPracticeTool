@@ -265,9 +265,19 @@
                 'HighlyConfidential/HCInternalException'
             )
             BlockAccess = $true
-            # Exchange honours AccessScope=NotInOrganization (set in the script);
-            # BlockAccessScope is included for UI parity ("Block only people
-            # outside your organization" radio button).
+            # IMPORTANT — DO NOT DELETE 'BlockAccessScope' on the Exchange rule.
+            # On Exchange, enforcement is driven entirely by AccessScope='NotInOrganization'
+            # (set in Setup-DLP.ps1 line ~496). The IPPS engine IGNORES BlockAccessScope
+            # for Exchange rules at evaluation time — it is read only by Purview's web
+            # UI rule-editor to highlight the matching radio button ("Block only people
+            # outside your organization"). If you remove this line:
+            #   * Enforcement is unchanged (Exchange still blocks external recipients).
+            #   * The Purview UI shows the radio group EMPTY when an admin opens the
+            #     rule, making it look misconfigured, and -AdoptExisting may flag it
+            #     as drift the next time the toolkit runs.
+            # Keep the value at 'PerUser' for UI parity with the radio "Block only
+            # people outside your organization". The SPO/ODFB rule below uses the same
+            # field but there the engine DOES read it — see the comment on that rule.
             BlockAccessScope = 'PerUser'
             NotifyUser  = @('SiteAdmin','LastModifier','Owner')
             GenerateIncidentReport = @('SiteAdmin')
