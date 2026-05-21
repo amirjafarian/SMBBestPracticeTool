@@ -443,6 +443,11 @@ $connectionInfo = & $connectScript @connectArgs
 if ($connectionInfo -and $connectionInfo.SharePointAdminUrl) {
     $SharePointAdminUrl = $connectionInfo.SharePointAdminUrl
 }
+$spoUsedWinPsProxy = [bool]($connectionInfo -and $connectionInfo.SpoUsedWinPsProxy)
+$spoWinPsSessionIds = @()
+if ($connectionInfo -and $connectionInfo.PSObject.Properties.Name -contains 'SpoWinPsSessionIds' -and $connectionInfo.SpoWinPsSessionIds) {
+    $spoWinPsSessionIds = @($connectionInfo.SpoWinPsSessionIds)
+}
 
 # ---------------------------------------------------------------------------
 # License auto-detection (E5 / Purview Suite -> auto-enable Container labels)
@@ -967,6 +972,16 @@ if ($ApplyAIControls) {
             # printed; a report failure is a usability bug, not a deploy bug.
             Write-Warning ("HTML report could not be written: {0}" -f $_.Exception.Message)
         } finally {
+            if ($spoUsedWinPsProxy) {
+                try { Remove-Module Microsoft.Online.SharePoint.PowerShell -Force -ErrorAction SilentlyContinue } catch { }
+                foreach ($sessionId in @($spoWinPsSessionIds)) {
+                    try {
+                        $proxySession = Get-PSSession -Id $sessionId -ErrorAction SilentlyContinue
+                        if ($proxySession) { Remove-PSSession -Session $proxySession -ErrorAction SilentlyContinue }
+                    } catch { }
+                }
+            }
+
             # Clear $global:PurviewRunLog so it doesn't leak between runs
             # in interactive PowerShell sessions.
             try { Clear-PurviewRunLog } catch { }
