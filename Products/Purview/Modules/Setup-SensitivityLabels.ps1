@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Creates and publishes Microsoft Purview sensitivity labels (SMB profile).
@@ -83,6 +84,10 @@ param(
 $ErrorActionPreference = 'Stop'
 # Auto-confirm: this toolkit is designed for unattended/scripted runs. Use -WhatIf for dry-run.
 $ConfirmPreference   = 'None'
+
+# Shared retry helper for transient IPPS errors (502, 503, 504, 429, timeouts).
+. (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
+
 # Extract a meaningful error message from an IPPS ErrorRecord. IPPS REST cmdlets
 # sometimes leave Exception.Message empty and only populate ErrorDetails or
 # FullyQualifiedErrorId, so we walk through several properties in priority order.
@@ -472,15 +477,16 @@ function Set-LabelEncryption {
         [ValidateSet('EncryptOnly','DoNotForward','None')]
         [string] $UserDefinedOutlookBehavior = 'None'
     )
-    $err = @()
     if ($ProtectionType -eq 'Template') {
-        Set-Label -Identity $Identity `
-            -EncryptionEnabled $true `
-            -EncryptionProtectionType 'Template' `
-            -EncryptionRightsDefinitions $rights `
-            -EncryptionContentExpiredOnDateInDaysOrNever 'Never' `
-            -EncryptionOfflineAccessDays $offlineDays `
-            -ErrorAction SilentlyContinue -ErrorVariable err -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+        Invoke-WithTransientRetry -Description ("Set-Label encryption (Template) '$Identity'") -Action {
+            Set-Label -Identity $Identity `
+                -EncryptionEnabled $true `
+                -EncryptionProtectionType 'Template' `
+                -EncryptionRightsDefinitions $rights `
+                -EncryptionContentExpiredOnDateInDaysOrNever 'Never' `
+                -EncryptionOfflineAccessDays $offlineDays `
+                -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+        }
     } else {
         $params = @{
             Identity                                    = $Identity
@@ -495,9 +501,10 @@ function Set-LabelEncryption {
             'DoNotForward'  { $params['EncryptionDoNotForward']  = $true }
             default         { } # 'None' = no Outlook-specific behaviour
         }
-        Set-Label @params -ErrorAction SilentlyContinue -ErrorVariable err -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+        Invoke-WithTransientRetry -Description ("Set-Label encryption (UserDefined) '$Identity'") -Action {
+            Set-Label @params -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+        }
     }
-    if ($err.Count -gt 0) { throw $err[0] }
 }
 
 function Set-LabelContentMarking {
@@ -528,9 +535,9 @@ function Set-LabelContentMarking {
         $params['ApplyWaterMarkingLayout']    = 'Diagonal'
         $params['ApplyWaterMarkingFontColor'] = '#FF0000'
     }
-    $err = @()
-    Set-Label @params -ErrorAction SilentlyContinue -ErrorVariable err -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-    if ($err.Count -gt 0) { throw $err[0] }
+    Invoke-WithTransientRetry -Description ("Set-Label content marking '$($params.Identity)'") -Action {
+        Set-Label @params -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+    }
 }
 
 function New-OrUpdate-Label {
@@ -572,8 +579,18 @@ function New-OrUpdate-Label {
         if ($ParentId) { $newArgs['ParentId'] = $ParentId }
 
         # IPPS cmdlets bypass -ErrorAction Stop. Capture errors via -ErrorVariable.
+        # PR4: wrap with Invoke-WithTransientRetry so 502/503/504/429 auto-retry.
+        # NOT using -AlreadyExistsIsSuccess here because the catch block below
+        # needs to inspect the message and extract the existing label's GUID for
+        # the "Duplicate display name" recovery path.
         $err = @()
-        New-Label @newArgs -ErrorAction SilentlyContinue -ErrorVariable err -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+        try {
+            Invoke-WithTransientRetry -Description ("New-Label '$($LabelDef.Name)'") -Action {
+                New-Label @newArgs -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
+        } catch {
+            $err = @($_)
+        }
 
         if ($err.Count -eq 0) {
             $existing = Get-Label -Identity $LabelDef.Name -ErrorAction SilentlyContinue
@@ -607,9 +624,11 @@ function New-OrUpdate-Label {
 
                 if ($AdoptExisting) {
                     Write-Host "    ~ Label '$($LabelDef.DisplayName)' already exists (Id: $existingGuid). -AdoptExisting set; updating." -ForegroundColor Yellow
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' -Target $LabelDef.DisplayName -Status 'Adopted' -Detail "Label already exists (Id: $existingGuid). -AdoptExisting set; will update."
                     # Fall through to update branch.
                 } else {
                     Write-Host "    = Label '$($LabelDef.DisplayName)' already exists (Id: $existingGuid). Using existing without changes (re-run with -AdoptExisting to overwrite)." -ForegroundColor DarkGray
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' -Target $LabelDef.DisplayName -Status 'Skipped' -Detail "Label already exists (Id: $existingGuid). Re-run with -AdoptExisting to overwrite."
                     return $found
                 }
             } elseif ($msg -match 'ComplianceRuleAlreadyExistsInScenarioException' -or
@@ -637,16 +656,17 @@ function New-OrUpdate-Label {
     # because New-Label already set those values.
     if (-not $justCreated -and $existing -and ($owned -or $AdoptExisting)) {
         if ($PSCmdlet.ShouldProcess($idForOps, 'Set-Label (display + tooltip)')) {
-            $serr = @()
-            Set-Label -Identity $idForOps `
-                -DisplayName $LabelDef.DisplayName `
-                -Tooltip $tooltip `
-                -Comment $comment `
-                -ErrorAction SilentlyContinue -ErrorVariable serr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($serr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("Set-Label display/tooltip '$idForOps'") -Action {
+                    Set-Label -Identity $idForOps `
+                        -DisplayName $LabelDef.DisplayName `
+                        -Tooltip $tooltip `
+                        -Comment $comment `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 Write-Host "    ~ Updated label '$($LabelDef.DisplayName)'." -ForegroundColor Yellow
-            } else {
-                Write-Warning "    Failed to update label '$($LabelDef.DisplayName)': $($(Format-IPPSError $serr[0]))"
+            } catch {
+                Write-Warning "    Failed to update label '$($LabelDef.DisplayName)': $(Format-IPPSError $_)"
             }
         }
     }
@@ -810,6 +830,14 @@ foreach ($lbl in $Config.Labels) {
     if ($lbl.SubLabels) { $cursor += $lbl.SubLabels.Count }
 }
 
+# Refresh the $allLabels cache with LIVE state from Purview before Phase A.
+# The initial snapshot at the top of the script was taken before Pass 2
+# created labels (and before any prior Pass 3 run shuffled priorities).
+# Reading priorities from a stale cache causes Phase A to skip labels that
+# look "already correct" but aren't, which is how 'Public' gets stranded
+# at the wrong end of the priority list on multi-run tenants.
+$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+
 # Pre-check: are config parents already in the right slots AND is Personal at 0?
 $parentsAlreadyCorrect = $true
 foreach ($lbl in $Config.Labels) {
@@ -829,68 +857,111 @@ if ($personalLbl.Count -gt 0) {
 if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
     # Phase A — config top-levels: reverse-push to 0. Final config order:
     # Config.Labels[0] at slot 0, Config.Labels[1] at slot 1, ...
+    #
+    # CRITICAL: read Priority via a LIVE Get-Label call inside the loop, not
+    # from $allLabels. Each Set-Label below mutates Purview but does NOT
+    # refresh the cache; the next iteration would otherwise compare against
+    # a stale snapshot and incorrectly skip a label whose cached priority
+    # was 0 at script start (the classic "Public stuck at the bottom" bug).
     for ($i = $Config.Labels.Count - 1; $i -ge 0; $i--) {
         $lbl = $Config.Labels[$i]
         $obj = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
         if (-not $obj) { continue }
-        if ($obj.Priority -eq 0) { continue }   # already at slot 0; Set 0 would be rejected
+        $live = Get-Label -Identity $obj.Name -ErrorAction SilentlyContinue
+        if (-not $live) { continue }
+        if ($live.Priority -eq 0) { continue }   # already at slot 0; Set 0 would be rejected
         if ($PSCmdlet.ShouldProcess($obj.Name, "Set priority=0 (top-level reorder)")) {
-            $perr = @()
-            Set-Label -Identity $obj.Name -Priority 0 `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -gt 0) {
-                Write-Warning "    Priority update failed for '$($lbl.DisplayName)': $($(Format-IPPSError $perr[0]))"
+            try {
+                Invoke-WithTransientRetry -Description ("Set-Label priority=0 '$($lbl.DisplayName)'") -Action {
+                    Set-Label -Identity $obj.Name -Priority 0 `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
+            } catch {
+                Write-Warning "    Priority update failed for '$($lbl.DisplayName)': $(Format-IPPSError $_)"
             }
         }
     }
 
     # Phase A2 — pin unmanaged top-levels (Personal first in $pinOrder so
-    # it gets pushed LAST and ends up at slot 0).
+    # it gets pushed LAST and ends up at slot 0). Uses Get-Label -Identity
+    # already, so live reads are in place.
     for ($i = $pinOrder.Count - 1; $i -ge 0; $i--) {
         $u = $pinOrder[$i]
         $uObj = Get-Label -Identity $u.Name -ErrorAction SilentlyContinue
         if (-not $uObj) { continue }
         if ($uObj.Priority -eq 0) { continue }
         if ($PSCmdlet.ShouldProcess($uObj.Name, "Set priority=0 (pin unmanaged label)")) {
-            $perr = @()
-            Set-Label -Identity $uObj.Name -Priority 0 `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -gt 0) {
-                Write-Warning "    Priority update failed for unmanaged label '$($u.DisplayName)': $($(Format-IPPSError $perr[0]))"
+            try {
+                Invoke-WithTransientRetry -Description ("Set-Label priority=0 (unmanaged) '$($u.DisplayName)'") -Action {
+                    Set-Label -Identity $uObj.Name -Priority 0 `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
+            } catch {
+                Write-Warning "    Priority update failed for unmanaged label '$($u.DisplayName)': $(Format-IPPSError $_)"
             }
         }
     }
 }
 
 # Phase B — sub-label reorder within each parent's block
+#
+# Sub-label priorities are GLOBAL (not relative to the parent), but Purview
+# enforces that a sub-label can only move within its parent's contiguous block.
+# We don't try to *compute* the parent's first-child slot from the parent's
+# own .Priority — that's unreliable because Purview's parent .Priority
+# numbering differs from the script's expected counting whenever the tenant
+# has unmanaged labels with sub-labels, or when Purview's internal counting
+# excludes some labels. Instead we *query reality*: read the current sub-label
+# priorities for the parent, take the minimum, and push each sub-label to
+# that slot in reverse config order. This is functionally what Phase A does
+# for top-levels (push each to slot 0 in reverse), but scoped to a parent's
+# block via the existing sub-label range that Purview already enforces.
 foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels -or $lbl.SubLabels.Count -eq 0) { continue }
-    # Re-fetch parent to pick up any priority shift from Phase A
-    $parentObj = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
+    # Re-fetch parent to pick up any priority shift from Phase A. We need a
+    # LIVE read here (not the $allLabels cache) because Phase A's Set-Label
+    # calls mutated Purview without refreshing the cache.
+    $parentMeta = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
+    if (-not $parentMeta) { continue }
+    $parentObj = Get-Label -Identity $parentMeta.Name -ErrorAction SilentlyContinue
     if (-not $parentObj) { continue }
-    $firstChildSlot = [int]$parentObj.Priority + 1
+
+    # Find the actual first-slot in this parent's block from current state.
+    # All children of this parent share a contiguous block; the minimum
+    # current Priority IS the first slot Purview will accept for any child.
+    $currentSubs = @(Get-Label -ErrorAction SilentlyContinue |
+        Where-Object { $_.ParentId -eq $parentObj.Guid } |
+        Sort-Object Priority)
+    if ($currentSubs.Count -eq 0) { continue }
+    $firstChildSlot = [int]$currentSubs[0].Priority
 
     # Pre-check: are the sub-labels already in config order?
     $childrenCorrect = $true
     $expectedSlot = $firstChildSlot
     foreach ($sub in $lbl.SubLabels) {
-        $subObj = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
-        if (-not $subObj -or $subObj.Priority -ne $expectedSlot) { $childrenCorrect = $false; break }
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        if (-not $subMeta) { $childrenCorrect = $false; break }
+        $subLive = Get-Label -Identity $subMeta.Name -ErrorAction SilentlyContinue
+        if (-not $subLive -or $subLive.Priority -ne $expectedSlot) { $childrenCorrect = $false; break }
         $expectedSlot++
     }
     if ($childrenCorrect) { continue }
 
     for ($i = $lbl.SubLabels.Count - 1; $i -ge 0; $i--) {
         $sub = $lbl.SubLabels[$i]
-        $subObj = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
-        if (-not $subObj) { continue }
-        if ($subObj.Priority -eq $firstChildSlot) { continue }   # already at first slot in block
-        if ($PSCmdlet.ShouldProcess($subObj.Name, "Set priority=$firstChildSlot (sub-label reorder)")) {
-            $sperr = @()
-            Set-Label -Identity $subObj.Name -Priority $firstChildSlot `
-                -ErrorAction SilentlyContinue -ErrorVariable sperr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($sperr.Count -gt 0) {
-                Write-Warning "    Priority update failed for '$($sub.DisplayName)': $($(Format-IPPSError $sperr[0]))"
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        if (-not $subMeta) { continue }
+        $subLive = Get-Label -Identity $subMeta.Name -ErrorAction SilentlyContinue
+        if (-not $subLive) { continue }
+        if ($subLive.Priority -eq $firstChildSlot) { continue }   # already at first slot in block
+        if ($PSCmdlet.ShouldProcess($subMeta.Name, "Set priority=$firstChildSlot (sub-label reorder)")) {
+            try {
+                Invoke-WithTransientRetry -Description ("Set-Label priority=$firstChildSlot '$($sub.DisplayName)'") -Action {
+                    Set-Label -Identity $subMeta.Name -Priority $firstChildSlot `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
+            } catch {
+                Write-Warning "    Priority update failed for '$($sub.DisplayName)': $(Format-IPPSError $_)"
             }
         }
     }
@@ -1032,18 +1103,19 @@ if ($policyCfg.DowngradeJustification) { $advanced['RequireDowngradeJustificatio
 
 if (-not $existingPolicy) {
     if ($PSCmdlet.ShouldProcess($policyCfg.Name, 'New-LabelPolicy (publish to All)')) {
-        $perr = @()
-        New-LabelPolicy `
-            -Name $policyCfg.Name `
-            -Comment "$tag $($policyCfg.Comment)" `
-            -Labels $allLabelNames `
-            -ExchangeLocation 'All' `
-            -AdvancedSettings $advanced `
-            -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-        if ($perr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("New-LabelPolicy '$($policyCfg.Name)'") -AlreadyExistsIsSuccess -Action {
+                New-LabelPolicy `
+                    -Name $policyCfg.Name `
+                    -Comment "$tag $($policyCfg.Comment)" `
+                    -Labels $allLabelNames `
+                    -ExchangeLocation 'All' `
+                    -AdvancedSettings $advanced `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
             Write-Host "    + Created label policy '$($policyCfg.Name)'." -ForegroundColor Green
-        } else {
-            Write-Warning "    Failed to create label policy '$($policyCfg.Name)': $($(Format-IPPSError $perr[0]))"
+        } catch {
+            Write-Warning "    Failed to create label policy '$($policyCfg.Name)': $(Format-IPPSError $_)"
         }
     }
 } else {
@@ -1070,13 +1142,11 @@ if (-not $existingPolicy) {
         $labelsToAdd = $allLabelNames
     }
     if ($PSCmdlet.ShouldProcess($policyCfg.Name, 'Set-LabelPolicy (refresh labels + advanced settings)')) {
-        $perr = @()
         $setArgs = @{
             Identity         = $policyCfg.Name
             Comment          = "$tag $($policyCfg.Comment)"
             AdvancedSettings = $advanced
-            ErrorAction      = 'SilentlyContinue'
-            ErrorVariable    = 'perr'
+            ErrorAction      = 'Stop'
             WarningAction    = 'SilentlyContinue'
             Confirm          = $false
         }
@@ -1088,15 +1158,17 @@ if (-not $existingPolicy) {
             $setArgs['RemoveLabels'] = $labelsToRemove
             Write-Host "    Unpublishing previously-published labels: $([string]::Join(', ', $labelsToRemove))" -ForegroundColor DarkYellow
         }
-        Set-LabelPolicy @setArgs | Out-Null
-        if ($perr.Count -eq 0) {
+        try {
+            Invoke-WithTransientRetry -Description ("Set-LabelPolicy '$($policyCfg.Name)'") -Action {
+                Set-LabelPolicy @setArgs | Out-Null
+            }
             if ($labelsToAdd.Count -eq 0 -and $labelsToRemove.Count -eq 0) {
                 Write-Host "    ~ Refreshed label policy '$($policyCfg.Name)' (label set already in sync)." -ForegroundColor Yellow
             } else {
                 Write-Host "    ~ Updated label policy '$($policyCfg.Name)'." -ForegroundColor Yellow
             }
-        } else {
-            Write-Warning "    Failed to update label policy '$($policyCfg.Name)': $($(Format-IPPSError $perr[0]))"
+        } catch {
+            Write-Warning "    Failed to update label policy '$($policyCfg.Name)': $(Format-IPPSError $_)"
         }
     }
 }

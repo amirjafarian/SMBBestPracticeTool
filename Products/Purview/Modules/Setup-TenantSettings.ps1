@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Applies foundational Microsoft Purview tenant settings.
@@ -45,7 +46,10 @@ param(
     [switch] $EnablePremiumAudit,
 
     [Parameter()]
-    [string[]] $PremiumAuditMailbox
+    [string[]] $PremiumAuditMailbox,
+
+    [Parameter()]
+    [switch] $NonInteractive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,69 +58,46 @@ $ConfirmPreference   = 'None'
 $settings = $Config.TenantSettings
 
 # ---------------------------------------------------------------------------
-# Transient-error retry helper (EXO/IPPS/SPO occasionally return 5xx that
-# resolve on retry — same pattern used by the cleanup script).
+# !!! DO NOT ADD -Confirm TO Set-SPOTenant CALLS — IT WILL BREAK THE RUN !!!
+#
+#   Set-SPOTenant (Microsoft.Online.SharePoint.PowerShell) does NOT implement
+#   SupportsShouldProcess and therefore does NOT accept -Confirm. Passing
+#   -Confirm:$false fails at parameter-binding time with:
+#       "A parameter cannot be found that matches parameter name 'Confirm'."
+#   This was previously diagnosed and fixed in May 2026 after a multi-hour
+#   debug session; do not re-introduce it. Verified against MS Learn:
+#   https://learn.microsoft.com/powershell/module/sharepoint-online/set-spotenant
+#
+#   We rely on $ConfirmPreference = 'None' above for any cmdlet that DOES
+#   honour it (EXO / IPPS Set-* cmdlets). Set-SPOTenant doesn't prompt
+#   interactively in module-mode either, so no -Confirm is needed.
+#
+# !!! DO NOT ADD `Set-PolicyConfig -EnableSpoAipMigration` AS A STEP !!!
+#
+#   `EnableSpoAipMigration` is an EXO/IPPS internal flag for tenants
+#   MIGRATING from legacy on-premises AIP/RMS. It is NOT a prerequisite for
+#   SPO sensitivity-label support and NOT a prerequisite for label
+#   co-authoring (`EnableLabelCoauth`) on a normal greenfield tenant.
+#   The MS Learn opt-in for SPO/ODFB labels is one cmdlet only:
+#       Set-SPOTenant -EnableAIPIntegration $true
+#   Ref: https://learn.microsoft.com/purview/sensitivity-labels-sharepoint-onedrive-files#use-powershell-to-enable-support-for-sensitivity-labels
+#
+#   A transient `SetPolicyConfigEnableLabelCoauthSpoAIpMigrationIsDisabledException`
+#   on Set-PolicyConfig -EnableLabelCoauth was previously misdiagnosed (May
+#   2026) as a hard prereq on EnableSpoAipMigration. It is NOT. Verified on
+#   tenant m365b485722: EnableLabelCoauth=True with EnableSpoAipMigration=False.
+#   Re-attempting Set-PolicyConfig -EnableSpoAipMigration alone throws
+#   `SetPolicyConfigEnableSpoAipMigrationRequiresEnableLabelCoauthException`,
+#   confirming the flag has its own pairing rules and is not safe to touch
+#   blindly. Do not re-introduce a step that sets it.
 # ---------------------------------------------------------------------------
-function Test-TransientServerError {
-    param([Parameter(Mandatory)] $ErrorRecord)
 
-    $blob = @(
-        $ErrorRecord.Exception.Message,
-        $ErrorRecord.ErrorDetails.Message,
-        $ErrorRecord.CategoryInfo.Reason,
-        $ErrorRecord.FullyQualifiedErrorId,
-        $ErrorRecord.Exception.GetType().FullName
-    ) -join ' '
-
-    if ([string]::IsNullOrWhiteSpace($blob)) { return $false }
-
-    $patterns = @(
-        '\b(429|500|502|503|504)\b',
-        'Service Unavailable',
-        'Gateway Timeout',
-        'Internal Server Error',
-        'server[- ]side error',
-        'could not be completed',
-        'try again',
-        'temporarily unavailable',
-        'throttl',
-        'timeout',
-        'A task was canceled'
-    )
-    foreach ($p in $patterns) {
-        if ($blob -match $p) { return $true }
-    }
-    return $false
-}
-
-function Invoke-WithTransientRetry {
-    param(
-        [Parameter(Mandatory)][scriptblock] $Action,
-        [Parameter(Mandatory)][string]      $Description,
-        [int] $MaxAttempts = 6,
-        [int[]] $BackoffSeconds = @(5, 15, 30, 45, 60)   # ~155s total before giving up
-    )
-
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        try {
-            & $Action
-            return $true
-        } catch {
-            $err = $_
-            $isTransient = Test-TransientServerError -ErrorRecord $err
-            $isLast      = $attempt -ge $MaxAttempts
-            if ($isTransient -and -not $isLast) {
-                $sleep = $BackoffSeconds[[Math]::Min($attempt - 1, $BackoffSeconds.Count - 1)]
-                $sleep += Get-Random -Minimum 0 -Maximum 3
-                Write-Host ("      ~ Transient error on '{0}' (attempt {1}/{2}). Sleeping {3}s and retrying..." -f $Description, $attempt, $MaxAttempts, $sleep) -ForegroundColor DarkYellow
-                Write-Host ("        {0}" -f $err.Exception.Message) -ForegroundColor DarkGray
-                Start-Sleep -Seconds $sleep
-                continue
-            }
-            throw
-        }
-    }
-}
+# ---------------------------------------------------------------------------
+# Transient-error retry helper - shared across all Setup-* modules (PR4).
+# Defined in Modules/Invoke-WithTransientRetry.ps1; dot-sourced here so this
+# module can use Invoke-WithTransientRetry + Test-TransientServerError.
+# ---------------------------------------------------------------------------
+. (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
 
 # ---------------------------------------------------------------------------
 # 1. Unified Audit Log (checked & set in Exchange Online, not IPPS)
@@ -168,6 +149,7 @@ if ($settings.EnableUnifiedAuditLog) {
         # already warned above
     } elseif ($audit.UnifiedAuditLogIngestionEnabled) {
         Write-Host "      Already enabled." -ForegroundColor DarkGray
+        Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'UnifiedAuditLogIngestion' -Target 'Tenant' -Status 'Skipped' -Detail 'Already enabled; no action taken.'
     } elseif ($PSCmdlet.ShouldProcess('Tenant', 'Enable Unified Audit Log ingestion')) {
 
         # Call the cmdlet plainly. Empirically, on some tenants any of the
@@ -183,7 +165,9 @@ if ($settings.EnableUnifiedAuditLog) {
         # minutes after a successful Set), so we trust no-exception = success.
         $auditSucceeded = $false
         try {
-            Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+            Invoke-WithTransientRetry -Description 'Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled' -Action {
+                Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+            }
             Write-Host "      Enabled (propagation can take up to 60 minutes)." -ForegroundColor Green
             $auditSucceeded = $true
         } catch {
@@ -202,7 +186,9 @@ if ($settings.EnableUnifiedAuditLog) {
                     $orgCustomizationAttempted = $true
                     Write-Host "      Organization customization enabled. Retrying audit toggle..." -ForegroundColor DarkGray
                     Start-Sleep -Seconds 15
-                    Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+                    Invoke-WithTransientRetry -Description 'Set-AdminAuditLogConfig (post-hydration)' -Action {
+                        Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+                    }
                     Write-Host "      Enabled (propagation can take up to 60 minutes)." -ForegroundColor Green
                     $auditSucceeded = $true
                 } catch {
@@ -211,7 +197,9 @@ if ($settings.EnableUnifiedAuditLog) {
                         $orgCustomizationAttempted = $true
                         Start-Sleep -Seconds 15
                         try {
-                            Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+                            Invoke-WithTransientRetry -Description 'Set-AdminAuditLogConfig (post-hydration, DS already exists)' -Action {
+                                Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
+                            }
                             Write-Host "      Enabled (propagation can take up to 60 minutes)." -ForegroundColor Green
                             $auditSucceeded = $true
                         } catch {
@@ -251,7 +239,22 @@ if ($spoAvailable -and $settings.EnableAIPIntegrationInSPO) {
         $spoTenant = $script:spoTenantState
         if ($spoTenant.EnableAIPIntegration) {
             Write-Host "      Already enabled." -ForegroundColor DarkGray
+            Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Set-SPOTenant EnableAIPIntegration' -Target 'SharePoint Online' -Status 'Skipped' -Detail 'Already enabled; no action taken.'
         } elseif ($PSCmdlet.ShouldProcess('SharePoint Online', 'Enable AIP integration')) {
+            # PR5/5f banner: tell the operator what is about to change BEFORE the
+            # tenant-wide setting flip. We rely on $ConfirmPreference='None' (set
+            # at the top of this file) for any cmdlet that honours -Confirm; this
+            # banner ensures unattended/scripted runs are never silent about a
+            # tenant-wide change.
+            #
+            # NOTE: Do NOT pass -Confirm:$false to Set-SPOTenant — see the big
+            # warning block at the top of this file. Set-SPOTenant does not
+            # implement SupportsShouldProcess.
+            Write-Host "      About to change a TENANT-WIDE SharePoint setting:" -ForegroundColor Yellow
+            Write-Host "        Set-SPOTenant -EnableAIPIntegration = `$true" -ForegroundColor Yellow
+            Write-Host "        Effect: SharePoint Online and OneDrive for Business start honouring sensitivity" -ForegroundColor DarkGray
+            Write-Host "                labels on files (auto-labelling, label-based access, downstream DLP)." -ForegroundColor DarkGray
+            Write-Host "                Required for label policies to enforce on SPO/ODFB content." -ForegroundColor DarkGray
             Invoke-WithTransientRetry -Description 'Set-SPOTenant -EnableAIPIntegration' -Action {
                 Set-SPOTenant -EnableAIPIntegration $true -WarningAction SilentlyContinue -ErrorAction Stop
             } | Out-Null
@@ -292,8 +295,19 @@ if ($spoAvailable -and $settings.EnableSensitivityLabelForPDF) {
         if ($current -eq $true) {
             Write-Host "      Already enabled." -ForegroundColor DarkGray
         } elseif ($PSCmdlet.ShouldProcess('SharePoint Online', 'Enable EnableSensitivityLabelforPDF')) {
+            # PR5/5f banner: see comment in section [2/5] above. PDF labelling
+            # is also tenant-wide and worth surfacing before the flip.
+            Write-Host "      About to change a TENANT-WIDE SharePoint setting:" -ForegroundColor Yellow
+            Write-Host "        Set-SPOTenant -EnableSensitivityLabelforPDF = `$true" -ForegroundColor Yellow
+            Write-Host "        Effect: SharePoint Online applies sensitivity labels to PDF files (display label" -ForegroundColor DarkGray
+            Write-Host "                in the SPO viewer, persist label on the PDF, honour label-based access)." -ForegroundColor DarkGray
             try {
-                Set-SPOTenant -EnableSensitivityLabelforPDF $true -ErrorAction Stop -WarningAction SilentlyContinue
+                # NOTE: Do NOT pass -Confirm to Set-SPOTenant — see warning block
+                # at the top of this file. The cmdlet does not implement
+                # SupportsShouldProcess and -Confirm fails parameter binding.
+                Invoke-WithTransientRetry -Description 'Set-SPOTenant -EnableSensitivityLabelforPDF' -Action {
+                    Set-SPOTenant -EnableSensitivityLabelforPDF $true -ErrorAction Stop -WarningAction SilentlyContinue
+                }
                 Write-Host "      Enabled." -ForegroundColor Green
             } catch {
                 Write-Warning "      Set-SPOTenant -EnableSensitivityLabelforPDF failed: $($_.Exception.Message). PDF labels may already be built-in for this tenant."
@@ -306,11 +320,26 @@ if ($spoAvailable -and $settings.EnableSensitivityLabelForPDF) {
 
 # ---------------------------------------------------------------------------
 # 4. Office co-authoring with sensitivity labels
+#
+# LICENSING: NOT an E5-only feature. Co-authoring on labeled/encrypted Office
+# files is part of the standard sensitivity-labels capability available in
+# Microsoft 365 Business Premium, E3, E5, A3, A5, F3, AIP P1, AIP P2 (per the
+# Microsoft Purview service description). That's why this step runs
+# unconditionally for every tier the toolkit supports — do not add an E5/
+# Purview-Suite gate here. The E5-only label feature is container labels
+# (step [5/5], gated by -EnableContainerLabels), not co-authoring.
+# Ref: https://learn.microsoft.com/purview/sensitivity-labels-coauthoring
 # ---------------------------------------------------------------------------
 if ($settings.EnableLabelCoAuth) {
     Write-Host "[4/5] Label co-authoring (Set-PolicyConfig)..." -ForegroundColor Cyan
+
     if ($PSCmdlet.ShouldProcess('Tenant', 'Enable label co-authoring')) {
-        # Set-PolicyConfig is idempotent — always safe to re-apply.
+        # Set-PolicyConfig -EnableLabelCoauth:$true is idempotent and has NO
+        # prereq on EnableSpoAipMigration in a normal Business-Premium / E3 /
+        # E5 tenant. See the big warning block at the top of this file —
+        # EnableSpoAipMigration is a legacy on-prem AIP migration flag, not a
+        # prereq for label co-authoring. Do not gate this step on it.
+        #
         # -WarningAction SilentlyContinue suppresses the cosmetic
         # "command completed successfully but no settings ... have been modified"
         # warning that fires when the setting is already in the desired state.
@@ -351,13 +380,16 @@ if ($EnableContainerLabels) {
         }
 
         if ($PSCmdlet.ShouldProcess('Group.Unified directory setting', 'Create with EnableMIPLabels=True')) {
-            New-MgBetaDirectorySetting -BodyParameter @{ templateId = $template.Id; values = $values } | Out-Null
+            Invoke-WithTransientRetry -Description 'New-MgBetaDirectorySetting Group.Unified' -AlreadyExistsIsSuccess -Action {
+                New-MgBetaDirectorySetting -BodyParameter @{ templateId = $template.Id; values = $values } -ErrorAction Stop | Out-Null
+            }
             Write-Host "      Created with EnableMIPLabels=True." -ForegroundColor Green
         }
     } else {
         $current = ($existing.Values | Where-Object Name -EQ 'EnableMIPLabels').Value
         if ($current -eq 'True') {
             Write-Host "      Already enabled." -ForegroundColor DarkGray
+            Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Group.Unified EnableMIPLabels' -Target 'AAD directory setting' -Status 'Skipped' -Detail 'Already True; no action taken.'
         } elseif ($PSCmdlet.ShouldProcess('Group.Unified directory setting', 'Set EnableMIPLabels=True (preserving other values)')) {
             # Read-modify-write: preserve every other value the customer has set.
             $newValues = foreach ($v in $existing.Values) {
@@ -367,8 +399,10 @@ if ($EnableContainerLabels) {
                     @{ name = $v.Name; value = $v.Value }
                 }
             }
-            Update-MgBetaDirectorySetting -DirectorySettingId $existing.Id `
-                -BodyParameter @{ values = $newValues } | Out-Null
+            Invoke-WithTransientRetry -Description 'Update-MgBetaDirectorySetting Group.Unified' -Action {
+                Update-MgBetaDirectorySetting -DirectorySettingId $existing.Id `
+                    -BodyParameter @{ values = $newValues } -ErrorAction Stop | Out-Null
+            }
             Write-Host "      Set EnableMIPLabels=True (other values preserved)." -ForegroundColor Green
         }
     }
@@ -392,7 +426,9 @@ if ($EnablePremiumAudit) {
                     continue
                 }
                 if ($PSCmdlet.ShouldProcess($mbx, 'Add SearchQueryInitiated to AuditOwner')) {
-                    Set-Mailbox -Identity $mbx -AuditOwner @{ Add = 'SearchQueryInitiated' }
+                    Invoke-WithTransientRetry -Description ("Set-Mailbox -Identity $mbx -AuditOwner +SearchQueryInitiated") -Action {
+                        Set-Mailbox -Identity $mbx -AuditOwner @{ Add = 'SearchQueryInitiated' } -ErrorAction Stop
+                    }
                     Write-Host "      $mbx : enabled." -ForegroundColor Green
                 }
             } catch {

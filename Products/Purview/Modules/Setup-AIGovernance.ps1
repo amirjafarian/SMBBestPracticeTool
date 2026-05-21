@@ -1,3 +1,4 @@
+#requires -Version 7.0
 <#
 .SYNOPSIS
     Creates Microsoft Purview DLP policies that govern AI interactions
@@ -52,6 +53,9 @@ param(
 $ErrorActionPreference = 'Stop'
 # Auto-confirm: this toolkit is designed for unattended/scripted runs. Use -WhatIf for dry-run.
 $ConfirmPreference   = 'None'
+
+# Shared retry helper for transient IPPS errors (502, 503, 504, 429, timeouts).
+. (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
 
 if (-not $Config.AIGovernance) {
     Write-Host "AIGovernance section not present in PurviewConfig.psd1; nothing to do." -ForegroundColor DarkGray
@@ -181,6 +185,7 @@ function Resolve-LabelByPath {
         }
         if ($byDisplay) {
             Write-Host "    Label '$Path' resolved by DisplayName '$($cfgEntry.DisplayName)' (Id: $($byDisplay.Guid), Name: $($byDisplay.Name)) — adopted-existing label." -ForegroundColor DarkYellow
+            Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Resolve label path' -Target $Path -Status 'Adopted' -Detail "Matched by DisplayName '$($cfgEntry.DisplayName)' -> existing GUID $($byDisplay.Guid)."
             return $byDisplay
         }
     }
@@ -235,6 +240,57 @@ function ConvertTo-LocationsJson {
         $json = "[$json]"
     }
     return $json
+}
+
+function ConvertTo-PurviewJsonString {
+    <#
+        Escapes a string so it is safe to drop INSIDE a JSON string literal
+        (i.e. between the surrounding double-quotes) per RFC 8259 section 7.
+
+        We assemble the AdvancedRule JSON by hand (see Build-CopilotAdvancedRuleJson
+        for the long explanation of why) rather than via ConvertTo-Json. Hand
+        assembly means we are responsible for escaping any character that would
+        otherwise break the JSON parse — a sensitivity label called
+            Acme "Confidential" Tier
+        or a tenant that uses a backslash in a custom display name would
+        produce malformed JSON without this helper, causing
+        New-DlpComplianceRule to fail with a cryptic IPPS deserialiser error.
+
+        Returns the inner content only (no surrounding double-quotes).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Value
+    )
+
+    $sb = [System.Text.StringBuilder]::new($Value.Length + 8)
+    foreach ($ch in $Value.ToCharArray()) {
+        $code = [int]$ch
+        # Compare by Unicode code-point so PowerShell escape-sequence ambiguity
+        # (`b is backspace, `a is BEL, etc.) cannot accidentally collapse two
+        # control chars onto the same switch case.
+        switch ($code) {
+            8  { [void]$sb.Append('\b'); break }   # backspace
+            9  { [void]$sb.Append('\t'); break }   # tab
+            10 { [void]$sb.Append('\n'); break }   # line feed
+            12 { [void]$sb.Append('\f'); break }   # form feed
+            13 { [void]$sb.Append('\r'); break }   # carriage return
+            34 { [void]$sb.Append('\"'); break }   # double-quote
+            92 { [void]$sb.Append('\\'); break }   # backslash
+            default {
+                if ($code -lt 0x20) {
+                    # Any other C0 control char — escape as \u00XX.
+                    [void]$sb.AppendFormat('\u{0:x4}', $code)
+                } else {
+                    [void]$sb.Append($ch)
+                }
+            }
+        }
+    }
+    return $sb.ToString()
 }
 
 function Build-CopilotAdvancedRuleJson {
@@ -313,7 +369,12 @@ function Build-CopilotAdvancedRuleJson {
         if (-not $l.Name -or -not $l.Guid) {
             throw "Build-CopilotAdvancedRuleJson: label entry missing Name or Guid."
         }
-        $labelLines += "                          { ""Name"": ""$($l.Name)"", ""Id"": ""$($l.Guid)"", ""Type"": ""Sensitivity"" }"
+        # PR5/5a: escape Name + Guid before string-concatenating into JSON. Labels
+        # named with quotes, backslashes, or control chars used to produce invalid
+        # JSON that the IPPS engine rejected with a cryptic deserialiser error.
+        $nameEsc = ConvertTo-PurviewJsonString -Value ([string]$l.Name)
+        $guidEsc = ConvertTo-PurviewJsonString -Value ([string]$l.Guid)
+        $labelLines += "                          { ""Name"": ""$nameEsc"", ""Id"": ""$guidEsc"", ""Type"": ""Sensitivity"" }"
     }
     $labelsBlock = $labelLines -join ",`n"
 
@@ -423,23 +484,24 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
 
     if (-not $existing) {
         if ($PSCmdlet.ShouldProcess($cfg.Name, "New-DlpCompliancePolicy (Copilot, -Mode $mode)")) {
-            $perr = @()
-            New-DlpCompliancePolicy `
-                -Name              $cfg.Name `
-                -Comment           "$tag $($cfg.Comment)" `
-                -Locations         $locationsJson `
-                -EnforcementPlanes $cfg.EnforcementPlanes `
-                -Mode              $mode `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("New-DlpCompliancePolicy (Copilot) '$($cfg.Name)'") -AlreadyExistsIsSuccess -Action {
+                    New-DlpCompliancePolicy `
+                        -Name              $cfg.Name `
+                        -Comment           "$tag $($cfg.Comment)" `
+                        -Locations         $locationsJson `
+                        -EnforcementPlanes $cfg.EnforcementPlanes `
+                        -Mode              $mode `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 if ($mode -eq 'TestWithoutNotifications') {
                     Write-Host "  + Created Copilot DLP policy in simulation mode (Mode=TestWithoutNotifications). Toggle 'Turn the policy on if it's not edited within fifteen days of simulation' in the Purview portal to auto-enable." -ForegroundColor Green
                 } else {
                     Write-Host "  + Created Copilot DLP policy (Mode=$mode)." -ForegroundColor Green
                 }
                 $existing = Get-DlpCompliancePolicy -Identity $cfg.Name -ErrorAction SilentlyContinue
-            } else {
-                Write-Warning "  Failed to create AI policy '$($cfg.Name)': $($(Format-IPPSError $perr[0]))"
+            } catch {
+                Write-Warning "  Failed to create AI policy '$($cfg.Name)': $(Format-IPPSError $_)"
                 continue
             }
         }
@@ -461,17 +523,18 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
         }
 
         if ($PSCmdlet.ShouldProcess($cfg.Name, 'Set-DlpCompliancePolicy (refresh)')) {
-            $perr = @()
-            Set-DlpCompliancePolicy @setArgs `
-                -ErrorAction SilentlyContinue -ErrorVariable perr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($perr.Count -eq 0) {
+            try {
+                Invoke-WithTransientRetry -Description ("Set-DlpCompliancePolicy (Copilot) '$($cfg.Name)'") -Action {
+                    Set-DlpCompliancePolicy @setArgs `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 if ($setArgs.ContainsKey('Mode')) {
                     Write-Host "  ~ Updated Copilot DLP policy and flipped Mode '$currentMode' -> '$($setArgs['Mode'])' (config-driven)." -ForegroundColor Green
                 } else {
                     Write-Host "  ~ Updated Copilot DLP policy (Mode=$currentMode unchanged)." -ForegroundColor Yellow
                 }
-            } else {
-                Write-Warning "  Failed to update AI policy '$($cfg.Name)': $($(Format-IPPSError $perr[0]))"
+            } catch {
+                Write-Warning "  Failed to update AI policy '$($cfg.Name)': $(Format-IPPSError $_)"
             }
         }
     }
@@ -536,15 +599,16 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
                     Write-Warning "  Cannot bump rule name to bypass tombstone: '$candName' would exceed 64 chars. Edit RuleName in PurviewConfig.psd1."
                     break
                 }
-                $rerr = @()
-                New-DlpComplianceRule `
-                    -Name           $candName `
-                    -Policy         $cfg.Name `
-                    -Comment        "$tag AI DLP rule (Copilot)." `
-                    -AdvancedRule   $advRuleJson `
-                    -RestrictAccess $cfg.RestrictAccess `
-                    -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-                if ($rerr.Count -eq 0) {
+                try {
+                    Invoke-WithTransientRetry -Description ("New-DlpComplianceRule (Copilot) '$candName'") -Action {
+                        New-DlpComplianceRule `
+                            -Name           $candName `
+                            -Policy         $cfg.Name `
+                            -Comment        "$tag AI DLP rule (Copilot)." `
+                            -AdvancedRule   $advRuleJson `
+                            -RestrictAccess $cfg.RestrictAccess `
+                            -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                    }
                     if ($candName -ne $cfg.RuleName) {
                         Write-Host "  + Created Copilot DLP rule as '$candName' (original name '$($cfg.RuleName)' tombstoned)." -ForegroundColor Green
                     } else {
@@ -552,17 +616,18 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
                     }
                     $created = $true
                     break
+                } catch {
+                    $msg = (Format-IPPSError $_)
+                    if ($msg -match 'already exists in scenario|ComplianceRuleAlreadyExistsInScenarioException') {
+                        $bumpCount++
+                        $nextName = "$($cfg.RuleName)-v$($bumpCount + 1)"
+                        Write-Host "      '$candName' is held by a soft-delete tombstone; retrying with '$nextName'..." -ForegroundColor DarkYellow
+                        $candName = $nextName
+                        continue
+                    }
+                    Write-Warning "  Failed to create AI rule '$candName': $msg"
+                    break
                 }
-                $msg = (Format-IPPSError $rerr[0])
-                if ($msg -match 'already exists in scenario|ComplianceRuleAlreadyExistsInScenarioException') {
-                    $bumpCount++
-                    $nextName = "$($cfg.RuleName)-v$($bumpCount + 1)"
-                    Write-Host "      '$candName' is held by a soft-delete tombstone; retrying with '$nextName'..." -ForegroundColor DarkYellow
-                    $candName = $nextName
-                    continue
-                }
-                Write-Warning "  Failed to create AI rule '$candName': $msg"
-                break
             }
             if (-not $created -and $bumpCount -gt $maxBumps) {
                 Write-Warning "  Could not find a free rule name after $maxBumps bumps. Edit RuleName in PurviewConfig.psd1 and re-run."
@@ -574,17 +639,23 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
             continue
         }
         if ($PSCmdlet.ShouldProcess($cfg.RuleName, 'Set-DlpComplianceRule (refresh)')) {
-            $rerr = @()
-            Set-DlpComplianceRule `
-                -Identity       $cfg.RuleName `
-                -Comment        "$tag AI DLP rule (Copilot)." `
-                -AdvancedRule   $advRuleJson `
-                -RestrictAccess $cfg.RestrictAccess `
-                -ErrorAction SilentlyContinue -ErrorVariable rerr -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-            if ($rerr.Count -eq 0) {
+            $setSucceeded = $false
+            $setMsg = $null
+            try {
+                Invoke-WithTransientRetry -Description ("Set-DlpComplianceRule (Copilot) '$($cfg.RuleName)'") -Action {
+                    Set-DlpComplianceRule `
+                        -Identity       $cfg.RuleName `
+                        -Comment        "$tag AI DLP rule (Copilot)." `
+                        -AdvancedRule   $advRuleJson `
+                        -RestrictAccess $cfg.RestrictAccess `
+                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                }
                 Write-Host "  ~ Updated Copilot DLP rule." -ForegroundColor Yellow
-            } else {
-                $setMsg = (Format-IPPSError $rerr[0])
+                $setSucceeded = $true
+            } catch {
+                $setMsg = (Format-IPPSError $_)
+            }
+            if (-not $setSucceeded) {
                 # Get-DlpComplianceRule sometimes returns a tombstone (soft-deleted)
                 # row even though the rule is gone from the live store. Set then fails
                 # with ErrorCommonComplianceRuleIsDeletedException. Detect that and
@@ -600,29 +671,31 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
                             Write-Warning "  Cannot bump rule name to bypass tombstone: '$candName' would exceed 64 chars. Edit RuleName in PurviewConfig.psd1."
                             break
                         }
-                        $rerr2 = @()
-                        New-DlpComplianceRule `
-                            -Name           $candName `
-                            -Policy         $cfg.Name `
-                            -Comment        "$tag AI DLP rule (Copilot)." `
-                            -AdvancedRule   $advRuleJson `
-                            -RestrictAccess $cfg.RestrictAccess `
-                            -ErrorAction SilentlyContinue -ErrorVariable rerr2 -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-                        if ($rerr2.Count -eq 0) {
+                        try {
+                            Invoke-WithTransientRetry -Description ("New-DlpComplianceRule (Copilot, tombstone-recreate) '$candName'") -Action {
+                                New-DlpComplianceRule `
+                                    -Name           $candName `
+                                    -Policy         $cfg.Name `
+                                    -Comment        "$tag AI DLP rule (Copilot)." `
+                                    -AdvancedRule   $advRuleJson `
+                                    -RestrictAccess $cfg.RestrictAccess `
+                                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                            }
                             Write-Host "  + Created Copilot DLP rule as '$candName' (original name '$($cfg.RuleName)' tombstoned)." -ForegroundColor Green
                             $created = $true
                             break
+                        } catch {
+                            $msg2 = (Format-IPPSError $_)
+                            if ($msg2 -match 'already exists in scenario|ComplianceRuleAlreadyExistsInScenarioException') {
+                                $bumpCount++
+                                $nextName = "$($cfg.RuleName)-v$($bumpCount + 1)"
+                                Write-Host "      '$candName' is held by a soft-delete tombstone; retrying with '$nextName'..." -ForegroundColor DarkYellow
+                                $candName = $nextName
+                                continue
+                            }
+                            Write-Warning "  Failed to create AI rule '$candName': $msg2"
+                            break
                         }
-                        $msg2 = (Format-IPPSError $rerr2[0])
-                        if ($msg2 -match 'already exists in scenario|ComplianceRuleAlreadyExistsInScenarioException') {
-                            $bumpCount++
-                            $nextName = "$($cfg.RuleName)-v$($bumpCount + 1)"
-                            Write-Host "      '$candName' is held by a soft-delete tombstone; retrying with '$nextName'..." -ForegroundColor DarkYellow
-                            $candName = $nextName
-                            continue
-                        }
-                        Write-Warning "  Failed to create AI rule '$candName': $msg2"
-                        break
                     }
                 } else {
                     Write-Warning "  Failed to update AI rule '$($cfg.RuleName)': $setMsg"
