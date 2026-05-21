@@ -131,7 +131,16 @@ function Resolve-LabelByPath {
     }
 
     $childName = $parts[-1]
-    $child = Get-Label -Identity $childName -ErrorAction SilentlyContinue
+    $child = $null
+    $maxLookupAttempts = 4
+    for ($la = 1; $la -le $maxLookupAttempts; $la++) {
+        $child = Get-Label -Identity $childName -ErrorAction SilentlyContinue
+        if ($child) { break }
+        if ($la -lt $maxLookupAttempts) {
+            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 15
+        }
+    }
     if ($child) {
         $isSoftDeleted = $false
         if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
