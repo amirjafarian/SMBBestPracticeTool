@@ -113,6 +113,8 @@ $ErrorActionPreference = 'Stop'
 # session exists" errors. Force WhatIf off for the duration of this script.
 $WhatIfPreference = $false
 $ConfirmPreference = 'None'
+$script:spoViaWinPsProxy = $false
+$script:spoWinPsSessionIds = @()
 
 function Test-IsAdmin {
     try {
@@ -252,14 +254,22 @@ function Ensure-RequiredModule {
     # solves this by loading SPO via -UseWindowsPowerShell (implicit WinPS 5.1
     # remoting) AFTER EXO is already connected. We follow the same pattern.
     $proxy = $UseWindowsPowerShellProxy.IsPresent -and ($PSVersionTable.PSEdition -eq 'Core')
+    $trackSpoProxy = $proxy -and $Name -eq 'Microsoft.Online.SharePoint.PowerShell'
 
     $available = Get-Module -ListAvailable -Name $Name -ErrorAction SilentlyContinue
 
     if ($available) {
         try {
             if ($proxy) {
+                $preProxySessionIds = if ($trackSpoProxy) { @(Get-PSSession -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) } else { @() }
                 Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
                     -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+                if ($trackSpoProxy) {
+                    $script:spoViaWinPsProxy = $true
+                    $script:spoWinPsSessionIds = @(Get-PSSession -ErrorAction SilentlyContinue |
+                        Where-Object { $preProxySessionIds -notcontains $_.Id } |
+                        ForEach-Object { $_.Id })
+                }
             } else {
                 Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
             }
@@ -337,8 +347,15 @@ function Ensure-RequiredModule {
 
     try {
         if ($proxy) {
+            $preProxySessionIds = if ($trackSpoProxy) { @(Get-PSSession -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) } else { @() }
             Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
                 -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            if ($trackSpoProxy) {
+                $script:spoViaWinPsProxy = $true
+                $script:spoWinPsSessionIds = @(Get-PSSession -ErrorAction SilentlyContinue |
+                    Where-Object { $preProxySessionIds -notcontains $_.Id } |
+                    ForEach-Object { $_.Id })
+            }
         } else {
             Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
         }
@@ -617,4 +634,6 @@ Write-Host "All required services connected." -ForegroundColor Green
 
 [pscustomobject]@{
     SharePointAdminUrl = if ($NeedsSharePoint) { $SharePointAdminUrl } else { $null }
+    SpoUsedWinPsProxy  = $script:spoViaWinPsProxy
+    SpoWinPsSessionIds = @($script:spoWinPsSessionIds)
 }
