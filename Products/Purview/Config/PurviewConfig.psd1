@@ -180,8 +180,8 @@
 
     # ----- Encryption rights bundles -----
     # Two pre-defined rights strings. The script picks one based on whether
-    # -EnableCoAuth is passed. Both grant rights to AuthenticatedUsers (every
-    # signed-in user in the tenant) so the labels are internal-only.
+    # -EnableCoAuth is passed. Both grant rights to AuthenticatedUsers, which
+    # includes B2B guests, social/MSA accounts, and OTP users.
     #
     # DEFAULT — Microsoft's "Reviewer" bundle:
     #   View, View Rights, Edit Content, Save, Reply, Reply All, Forward.

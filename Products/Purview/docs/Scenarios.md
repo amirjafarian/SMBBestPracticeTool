@@ -98,9 +98,9 @@ in [`PurviewConfig.psd1`](../Config/PurviewConfig.psd1) to surface more.
 ### Encryption — who can open the file?
 
 Only the **3 Highly Confidential sub-labels** apply encryption. The rights
-are granted to `AuthenticatedUsers` (every signed-in user in the tenant),
-which makes these labels effectively **internal-only** — files cannot leave
-the tenant.
+are granted to `AuthenticatedUsers`, which includes employees, B2B guests,
+social/MSA accounts, and OTP users authenticated through Entra B2B. These
+labels are therefore **not internal-only by default**.
 
 | Switch | Rights bundle | Office co-authoring | Programmatic access |
 |---|---|---|---|
