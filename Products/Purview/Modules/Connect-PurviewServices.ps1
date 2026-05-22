@@ -258,8 +258,20 @@ function Ensure-RequiredModule {
     if ($available) {
         try {
             if ($proxy) {
-                Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
-                    -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+                # WinCompat sessions use a stock PSModulePath that doesn't include the
+                # PS 7 user-module location. Discover the module's full path on the
+                # PS 7 side and pass it explicitly so the proxy import loads from the
+                # same on-disk location regardless of WinCompat's own PSModulePath.
+                $availMod = Get-Module -ListAvailable -Name $Name -ErrorAction SilentlyContinue |
+                    Sort-Object Version -Descending |
+                    Select-Object -First 1
+                if ($availMod -and $availMod.Path) {
+                    Import-Module -UseWindowsPowerShell -FullyQualifiedName $availMod.Path `
+                        -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+                } else {
+                    Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
+                        -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+                }
             } else {
                 Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
             }
@@ -337,8 +349,20 @@ function Ensure-RequiredModule {
 
     try {
         if ($proxy) {
-            Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
-                -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            # WinCompat sessions use a stock PSModulePath that doesn't include the
+            # PS 7 user-module location. Discover the module's full path on the
+            # PS 7 side and pass it explicitly so the proxy import loads from the
+            # same on-disk location regardless of WinCompat's own PSModulePath.
+            $availMod = Get-Module -ListAvailable -Name $Name -ErrorAction SilentlyContinue |
+                Sort-Object Version -Descending |
+                Select-Object -First 1
+            if ($availMod -and $availMod.Path) {
+                Import-Module -UseWindowsPowerShell -FullyQualifiedName $availMod.Path `
+                    -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            } else {
+                Import-Module $Name -UseWindowsPowerShell -DisableNameChecking `
+                    -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            }
         } else {
             Import-Module $Name -DisableNameChecking -ErrorAction Stop | Out-Null
         }
