@@ -160,15 +160,55 @@ if ($settings.EnableUnifiedAuditLog) {
         #   * -ErrorVariable capture
         # Bare invocation works. $ErrorActionPreference='Stop' is set at the
         # top of the file, so any real failure becomes a terminating exception
-        # we catch below. Post-state verification via Get-AdminAuditLogConfig
-        # is unreliable (eventual consistency — can return False for several
-        # minutes after a successful Set), so we trust no-exception = success.
+        # we catch below.
         $auditSucceeded = $false
         try {
             Invoke-WithTransientRetry -Description 'Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled' -Action {
                 Set-AdminAuditLogConfig -UnifiedAuditLogIngestionEnabled $true
             }
-            Write-Host "      Enabled (propagation can take up to 60 minutes)." -ForegroundColor Green
+
+            # Verify the write took effect. Both EXO and IPPS expose
+            # Get-AdminAuditLogConfig, but only EXO exposes Set. Because the
+            # toolkit connects IPPS after EXO, a bare Get can bind to the IPPS
+            # session and shadow the EXO view we just wrote. Resolve Get from
+            # the same module that exposes Set so verification reads the same
+            # source of truth, then poll briefly for eventual consistency.
+            $setCmd = Get-Command Set-AdminAuditLogConfig -ErrorAction SilentlyContinue
+            $auditGetCmd = $null
+            if ($setCmd) {
+                $auditGetCmd = Get-Command Get-AdminAuditLogConfig -All -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Source -eq $setCmd.Source } |
+                    Select-Object -First 1
+            }
+            if (-not $auditGetCmd) {
+                $auditGetCmd = Get-Command Get-AdminAuditLogConfig -ErrorAction SilentlyContinue
+            }
+
+            $verifyAttempts = 5
+            $auditVerified  = $false
+            for ($va = 1; $va -le $verifyAttempts; $va++) {
+                try {
+                    $vCfg = & $auditGetCmd -ErrorAction Stop
+                    if ($vCfg.UnifiedAuditLogIngestionEnabled) {
+                        $auditVerified = $true
+                        break
+                    }
+                } catch {
+                    # Read failure is non-fatal here; keep polling.
+                }
+                if ($va -lt $verifyAttempts) {
+                    Write-Host ("      Audit config not confirmed yet (attempt $va/$verifyAttempts). Waiting 5s...") -ForegroundColor DarkYellow
+                    Start-Sleep -Seconds 5
+                }
+            }
+
+            if ($auditVerified) {
+                Write-Host "      Enabled and verified." -ForegroundColor Green
+            } else {
+                Write-Host "      Pending — audit configuration may still be applying (UnifiedAuditLogIngestionEnabled returned False after 20s)." -ForegroundColor Yellow
+                Write-Host "      To verify: Connect-ExchangeOnline; (Get-AdminAuditLogConfig).UnifiedAuditLogIngestionEnabled" -ForegroundColor DarkGray
+                Write-Host "      Expected on some tenants where EXO propagation exceeds 20s — the Set call succeeded (no exception)." -ForegroundColor DarkGray
+            }
             $auditSucceeded = $true
         } catch {
             $err = $_

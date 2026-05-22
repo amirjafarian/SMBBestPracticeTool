@@ -110,6 +110,7 @@ function Test-TransientServerError {
         'temporarily unavailable',
         'throttl',
         'timeout',
+        'EnableSpoAipMigrationIsDisabledException',
         'A task was canceled'
     )
     foreach ($p in $patterns) {
