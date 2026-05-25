@@ -17,6 +17,7 @@ list of every value the script applies, see
 non-technical companion docs, see:
 
 * [`Change-Management-Playbook.md`](Change-Management-Playbook.md) — pre-deploy / day-of / day 1–5 / day-30 promote-from-simulation gate
+* [`End-User-Adoption-Guide.md`](End-User-Adoption-Guide.md) — plain-language guide to send to employees before rollout, with email templates (T-7 / T-0 / T+30)
 * [`Retention-Default-Risk.md`](Retention-Default-Risk.md) — when the 7-year default is right, when it isn't, and how to override
 * [`DLP-Simulation-Exit-Runbook.md`](DLP-Simulation-Exit-Runbook.md) — how to pull the "what would have leaked" report from Activity Explorer before promoting DLP out of simulation
 

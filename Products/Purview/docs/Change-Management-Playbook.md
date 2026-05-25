@@ -4,6 +4,10 @@
 > rolling the SMBTool Purview baseline into a customer tenant. This is the
 > *non-technical* counterpart to the script — it covers the customer
 > conversation, comms, and the day-30 promote-from-simulation gate.
+>
+> **For the end-user-facing companion** (what employees see, plain-language
+> FAQ, ready-to-send Day -7 / Day 0 / Day +30 comms templates), see
+> [`End-User-Adoption-Guide.md`](End-User-Adoption-Guide.md).
 
 The script handles the engineering correctly. **This playbook is what makes
 it safe in production.** Several defaults have customer-visible consequences

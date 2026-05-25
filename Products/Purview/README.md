@@ -20,6 +20,12 @@ Security Best Practice Deployment" guide for Business Premium.
 > promote-from-simulation gate). Pairs with
 > [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md) and
 > [`docs/DLP-Simulation-Exit-Runbook.md`](docs/DLP-Simulation-Exit-Runbook.md).
+>
+> 👥 **Communicating to end users?** Send
+> [`docs/End-User-Adoption-Guide.md`](docs/End-User-Adoption-Guide.md)
+> to your users **before** the rollout. It explains what they'll see,
+> what changes after 30 days, and includes ready-to-edit email
+> templates for T-7 / T-0 / T+30.
 
 > ⚠️ **Always pilot in a test tenant before applying to production.**
 > Sensitivity-label and DLP policies are tenant-wide and can affect every
