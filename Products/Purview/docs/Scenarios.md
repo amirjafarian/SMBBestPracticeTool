@@ -216,7 +216,7 @@ in config to a single mailbox before the wider rollout.
 ## Scenario 5 — AI governance (Microsoft 365 Copilot DLP)
 
 **Module:** [`Setup-AIGovernance.ps1`](../Modules/Setup-AIGovernance.ps1)
-**Opt-in. Only runs when `-ApplyAIControls` is passed.**
+**Default ON for E5 / Purview Suite tenants. Auto-skipped on Business Premium (`-BPOnly`). Opt out with `-SkipAIControls`.**
 
 | Policy | What it does |
 |---|---|
@@ -225,10 +225,16 @@ in config to a single mailbox before the wider rollout.
 This honours `DlpStartInSimulation` the same way as the other DLP policies
 — safe to deploy in audit mode first.
 
-> **Licensing note.** Requires **Microsoft 365 Copilot per-user licensing**
-> on the tenant for enforcement to apply. Without Copilot licences the
-> backend rejects the rule and the script logs a clear error; the rest of
-> the deploy continues.
+> **Licensing note.** Requires **Microsoft 365 E5 / Purview Suite** for the
+> DLP-for-Copilot policy plane. Per
+> [Microsoft Learn](https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about),
+> the policy enforces against both paid **Microsoft 365 Copilot** and the
+> free **Microsoft 365 Copilot Chat** experience that's included in
+> eligible M365 licenses — so creation succeeds on any E5 / Purview Suite
+> tenant regardless of whether paid Copilot per-user licenses are present.
+> On Business Premium the policy plane is not available, so the toolkit
+> auto-skips this step when `-BPOnly` is set (manually or via license
+> auto-detect).
 
 ---
 
@@ -249,7 +255,7 @@ automatically. Use `-BPOnly` to hard-block any E5-only feature, or
 | **Container labels** (Teams / M365 Groups / SPO sites) | ❌ blocked by `-BPOnly` | ✅ auto-on | ✅ |
 | **Premium audit** (1-yr retention, `SearchQueryInitiated`) | ❌ | ✅ via `-EnablePremiumAudit` | ✅ |
 | **Endpoint DLP** (devices) | ❌ blocked by `-BPOnly` | ✅ created in simulation | ✅ |
-| **Copilot DLP** (block Copilot for HC) | ❌ no Copilot licences | ➕ requires Copilot add-on | ✅ via `-ApplyAIControls` |
+| **Copilot DLP** (block Copilot for HC) | ❌ blocked by `-BPOnly` | ✅ default ON (opt-out via `-SkipAIControls`) | ✅ |
 | DLP for Defender for Cloud Apps / on-prem / Power BI | ❌ | ✅ if added to config | ✅ |
 
 ### What changes when a customer upgrades from Business Premium to E5
@@ -260,7 +266,11 @@ Re-run the script with no `-BPOnly` flag. On the same config:
    detection handles it).
 2. **Endpoint DLP** policy starts being created (the third entry in
    `DlpPolicies` is no longer rejected).
-3. **Premium audit** stays off until you opt in with
+3. **Copilot DLP / AI governance** starts being created (default-on for
+   E5 / Purview Suite). Lands in simulation mode while
+   `DlpStartInSimulation = $true`. Pass `-SkipAIControls` if the
+   customer has a specific reason to defer this.
+4. **Premium audit** stays off until you opt in with
    `-EnablePremiumAudit -PremiumAuditMailbox …` — partners shouldn't
    automatically expand audit scope without a conversation.
 
@@ -269,10 +279,12 @@ place are detected, left alone, or updated only where config has drifted.
 
 ### What changes when a customer adds Microsoft 365 Copilot
 
-Re-run with `-ApplyAIControls`. The AI governance policy is created in
-simulation mode by default (consistent with the rest of the toolkit). Once
-you're happy with what it would block, flip simulation off in config and
-re-run.
+Nothing extra needs to be passed. AI governance is already default-on for
+E5 / Purview Suite tenants and protects both paid Copilot and the free
+Copilot Chat experience. The policy is created in simulation mode by
+default (consistent with the rest of the toolkit) — once you're happy
+with what it would block, flip `DlpStartInSimulation` to `$false` in
+config and re-run.
 
 ---
 
@@ -319,7 +331,7 @@ For the long-form Microsoft Purview guide, see
 | Preview everything, no changes | `-WhatIf` |
 | Standard Business Premium customer | *(no extra flags — defaults are SMB-tuned)* |
 | Block all E5 features explicitly | `-BPOnly` |
-| Add Microsoft 365 Copilot guardrail | `-ApplyAIControls` |
+| Skip Copilot DLP guardrail (E5 / Purview Suite default-on) | `-SkipAIControls` |
 | Customer has E5 + wants container labels | *(auto-enabled — no flag needed)* |
 | Update labels / DLP that already exist (not toolkit-created) | `-AdoptExisting` |
 | Re-deploy only DLP after fixing config | `-SkipTenantSettings -SkipLabels` (retention is opt-in already) |

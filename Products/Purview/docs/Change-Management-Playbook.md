@@ -25,7 +25,7 @@ customer; you can shorten subsequent ones with experience.
 
 | # | Action | Owner | Output |
 |---|--------|-------|--------|
-| 1 | **Confirm tenant SKU** (Business Premium vs E5 / Purview Suite vs Copilot add-on) | Partner | Decides whether `-BPOnly` is required and whether `-ApplyAIControls` is appropriate |
+| 1 | **Confirm tenant SKU** (Business Premium vs E5 / Purview Suite) | Partner | Decides whether `-BPOnly` is required. AI governance is default-on for E5 / Purview Suite tenants (covers both paid Microsoft 365 Copilot and free Copilot Chat) and auto-skipped on Business Premium |
 | 2 | **Confirm vertical and any regulatory framework** (law, accounting, healthcare, financial advisor, construction, real estate) | Partner + customer | Decides whether to enable retention at all (`-ApplyRetention` is opt-in) and, if enabled, what duration. The **default 7-year mail deletion** aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but may still be wrong for some verticals — see [Retention-Default-Risk.md](Retention-Default-Risk.md) |
 | 3 | **Inventory current Purview state** in the tenant — existing labels, DLP policies, retention policies | Partner | If any exist, decide between `-AdoptExisting` (toolkit takes over) or rename / archive first |
 | 4 | **Identify B2B guest exposure** — does the customer routinely invite accountants, lawyers, MSPs as guests? | Partner + customer | If yes, the `AuthenticatedUsers` encryption scope is **not** "internal-only" — see [Known sharp edges](#known-sharp-edges) |
@@ -36,7 +36,7 @@ customer; you can shorten subsequent ones with experience.
 ### Decisions to lock before you run the script
 
 * `-BPOnly` — yes/no
-* `-ApplyAIControls` — yes/no (only if Copilot add-on is in the tenant)
+* `-SkipAIControls` — yes/no (AI governance is default-on for E5 / Purview Suite; only set this if the customer has a specific reason to opt out)
 * `-ApplyRetention` — yes/no (**opt-in** — only enable if the customer has consciously chosen a retention duration appropriate for their vertical)
 * `-EnableContainerLabels` — accept the auto-detect default, or override
 * `-EnablePremiumAudit` + which mailbox(es) — yes/no

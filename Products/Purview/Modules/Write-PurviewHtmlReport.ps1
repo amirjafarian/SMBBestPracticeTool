@@ -373,11 +373,19 @@ Sensitivity labels and label policies can take up to 24 hours to fully propagate
             Link  = 'docs/DLP-Simulation-Exit-Runbook.md'
             Why   = $null
         })
-    } elseif ($aiStatus -like 'Skipped (-ApplyAIControls*') {
+    } elseif ($aiStatus -like 'Skipped (-SkipAIControls*' -or $aiStatus -like 'Skipped (-ApplyAIControls*') {
         $next.Add(@{
             When  = 'Optional'
-            What  = 'Provision the Copilot DLP policies if the customer has Microsoft 365 Copilot.'
-            How   = 'Re-run the script with <code>-ApplyAIControls</code> to deploy the AI governance scenarios defined in <code>PurviewConfig.psd1 -&gt; AIGovernance</code>. Without these, Copilot can summarise / reason over Highly Confidential content unrestricted.'
+            What  = 'Provision the Copilot DLP policies if the customer is on E5 / Purview Suite.'
+            How   = 'AI governance is now default-on for E5 / Purview Suite tenants. Either remove <code>-SkipAIControls</code> from your re-run, or (if you originally passed the deprecated <code>-ApplyAIControls</code>) just re-run without it — the policies in <code>PurviewConfig.psd1 -&gt; AIGovernance</code> will deploy automatically. Without these, Copilot can summarise / reason over Highly Confidential content unrestricted.'
+            Link  = $null
+            Why   = $null
+        })
+    } elseif ($aiStatus -like 'Skipped (E5 / Purview Suite required*') {
+        $next.Add(@{
+            When  = 'When license available'
+            What  = 'Upgrade to E5 or add Purview Suite to enable Copilot DLP.'
+            How   = 'Copilot DLP (block Copilot grounding on Highly Confidential content) is part of the Microsoft 365 E5 / Purview Suite policy plane. Once the customer holds an eligible SKU, re-run the toolkit without <code>-BPOnly</code> — AI governance will run automatically. See <a href="https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about">Microsoft Learn: DLP for Microsoft 365 Copilot</a>.'
             Link  = $null
             Why   = $null
         })

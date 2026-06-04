@@ -43,10 +43,12 @@
                                   blocking external sharing of the
                                   Confidential\AllEmployees label
       4. Retention              — Exchange mailbox 7-year retain-then-delete
-      5. AI governance          — OPT-IN. Microsoft 365 Copilot DLP policies
+      5. AI governance          — Microsoft 365 Copilot DLP policies
                                   (e.g. AI_054 - Block Copilot for Highly
-                                  Confidential). Provisioned only when
-                                  -ApplyAIControls is supplied.
+                                  Confidential). Default ON for E5 / Purview
+                                  Suite tenants; auto-skipped on Business
+                                  Premium ($BPOnly). Opt out with
+                                  -SkipAIControls.
 
     Default mode = APPLY changes. Pass -WhatIf for preview, or -Confirm for
     per-action confirmation prompts.
@@ -86,12 +88,27 @@
     choose a duration for the customer's vertical before enabling.
     See docs/Retention-Default-Risk.md.
 
+.PARAMETER SkipAIControls
+    Skip the AI governance / Microsoft 365 Copilot DLP policy step. By
+    default, AI governance runs on every E5 / Purview Suite deployment
+    because the policy plane is included in those SKUs and the protection
+    (blocking Copilot from grounding on Highly Confidential content) is the
+    same risk class as Endpoint DLP. AI governance is auto-skipped on
+    Business Premium tenants ($BPOnly) regardless of this switch.
+
+    Per Microsoft Learn, the policy enforces against both paid Microsoft
+    365 Copilot and the free Microsoft 365 Copilot Chat experience, so
+    creation succeeds on E5 / Purview Suite tenants even when no paid
+    Copilot per-user licenses are present.
+
+    See: https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about
+
 .PARAMETER ApplyAIControls
-    Provision AI governance / Microsoft 365 Copilot DLP policies from the
-    AIGovernance section of PurviewConfig.psd1 (e.g. AI_054 — Block Copilot
-    for Highly Confidential). Off by default; AI policies are only created
-    when this switch is supplied. Requires Microsoft 365 Copilot per-user
-    licensing on the target tenant for enforcement to apply.
+    DEPRECATED. AI governance is now provisioned by default (see
+    -SkipAIControls). Passing this switch emits a deprecation warning and
+    is otherwise ignored. Cannot be combined with -SkipAIControls. Kept
+    for backward compatibility with existing partner runbooks; will be
+    removed in a future major version.
 
 .PARAMETER EnableContainerLabels
     Also enable Group.Unified EnableMIPLabels so labels can be applied to
@@ -206,6 +223,13 @@ param(
     [Parameter()]
     [switch] $ApplyRetention,
 
+    [Parameter()]
+    [switch] $SkipAIControls,
+
+    # DEPRECATED — see -SkipAIControls. Retained as a no-op switch (with a
+    # runtime deprecation warning) so existing partner runbooks that pass
+    # -ApplyAIControls continue to work without a hard parameter-binding
+    # error. Mutually exclusive with -SkipAIControls (validated below).
     [Parameter()]
     [switch] $ApplyAIControls,
 
@@ -348,6 +372,17 @@ if ($BPOnly) {
     }
 }
 
+# AI controls: validate the deprecated/new switch combo and warn callers
+# who still pass -ApplyAIControls. The switch is a no-op (AI governance is
+# now default-on for E5 / Purview Suite tenants) but we keep it bindable
+# so existing partner runbooks don't crash with "parameter not found".
+if ($ApplyAIControls -and $SkipAIControls) {
+    throw "-ApplyAIControls and -SkipAIControls cannot be combined. -ApplyAIControls is deprecated (AI governance is now default-on); use -SkipAIControls alone to opt out, or remove both switches to accept the default."
+}
+if ($ApplyAIControls) {
+    Write-Warning "-ApplyAIControls is deprecated and ignored: AI governance is now default-on for E5 / Purview Suite tenants. Pass -SkipAIControls to opt out, or -BPOnly to force-skip. This switch will be removed in a future release."
+}
+
 # ---------------------------------------------------------------------------
 # Preflight summary
 # ---------------------------------------------------------------------------
@@ -357,7 +392,10 @@ $tickTenant     = if (-not $SkipTenantSettings) { 'X' } else { ' ' }
 $tickLabels     = if (-not $SkipLabels)         { 'X' } else { ' ' }
 $tickDlp        = if (-not $SkipDLP)            { 'X' } else { ' ' }
 $tickRetention  = if ($ApplyRetention)          { 'X' } else { ' ' }
-$tickAi         = if ($ApplyAIControls)         { 'X' } else { ' ' }
+$tickAi         = if ($SkipAIControls)          { ' ' }
+                  elseif ($BPOnly -or $NoLicenseAutoDetect) {
+                      if ($BPOnly) { ' ' } else { 'X' }
+                  } else                            { '?' }
 $tickContainer  = if ($BPOnly -or $NoLicenseAutoDetect -or $SkipTenantSettings) {
                       if ($EnableContainerLabels) { 'X' } else { ' ' }
                   } elseif ($EnableContainerLabels) { 'X' }
@@ -384,13 +422,16 @@ $banner = @"
     [$tickLabels] Sensitivity labels (3 parents + 5 sub-labels, publish)
     [$tickDlp] DLP policies       (Exchange + SPO/OneDrive)
     [$tickRetention] Retention          (Exchange 7 years — opt-in via -ApplyRetention)
-    [$tickAi] AI governance      (Microsoft 365 Copilot DLP — opt-in)
+    [$tickAi] AI governance      (Block Copilot grounding on Highly Confidential — default on; opt out: -SkipAIControls; auto-skipped on Business Premium)
 
   Optional features:
     [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = auto-enable on M365 E5 / Purview Suite]
     [$tickPremium] Premium audit    (SearchQueryInitiated)
     [$tickAdopt] Adopt existing   (overwrite non-toolkit objects)
     [$tickCoAuth] Co-Author rights (Copy/Print/Allow Macros) on encrypted labels — default is Reviewer
+
+  Legend: 'X' = task is in scope and will run.  ' ' = task is skipped (by user opt-out or BP auto-skip).
+          '?' = task pending license auto-detect — runs if tenant has E5 / Purview Suite, otherwise auto-skips.
 
   Mode: $bannerMode
   License tier: $bannerTier
@@ -416,7 +457,17 @@ $connectArgs = @{ TenantAdminUpn = $TenantAdminUpn }
 if ($needsSpo)             { $connectArgs['NeedsSharePoint']     = $true }
 if ($SharePointAdminUrl)   { $connectArgs['SharePointAdminUrl']   = $SharePointAdminUrl }
 if ($DelegatedOrganization){ $connectArgs['DelegatedOrganization'] = $DelegatedOrganization }
-$wantGraphForAutoDetect = (-not $BPOnly -and -not $NoLicenseAutoDetect -and -not $SkipTenantSettings -and -not $EnableContainerLabels)
+# License auto-detect must run when ANY tier-dependent feature is in scope.
+# Today there are two:
+#   * AI governance — default-on for E5 / Purview Suite, auto-skipped on BP.
+#   * Container labels — auto-enabled when an E5 / Purview Suite SKU is
+#     detected, and only when the caller hasn't pre-opted-in / opted-out.
+# If neither is in scope, skip the Graph call to keep BP-only / partial
+# re-runs lean.
+$aiInScope                 = -not $SkipAIControls
+$containerAutoEnableInScope = (-not $SkipTenantSettings -and -not $EnableContainerLabels)
+$wantGraphForAutoDetect = (-not $BPOnly -and -not $NoLicenseAutoDetect -and
+                           ($aiInScope -or $containerAutoEnableInScope))
 if ($EnableContainerLabels -or $wantGraphForAutoDetect) { $connectArgs['ConnectGraph'] = $true }
 # Least-privilege Graph scopes (Jim's PR1 feedback):
 #   * Organization.Read.All       — covers /subscribedSkus + /organization (license auto-detect, tenant-identity confirm)
@@ -865,11 +916,16 @@ if ($ApplyRetention) {
     Add-RunLogEntry -Module 'Setup-Retention' -Action 'Module' -Status 'Skipped' -Detail '-ApplyRetention not set (opt-in)'
 }
 
-# AI governance is opt-in. Without -ApplyAIControls we still print the step
-# header so the [N/5] counter is consistent and it's obvious AI controls
-# exist as a knob; otherwise it's invisible to operators.
+# AI governance is now default-on for E5 / Purview Suite tenants.
+# Skip paths:
+#   * -SkipAIControls — explicit operator opt-out
+#   * $BPOnly — auto-detected Business Premium (Copilot DLP policy plane
+#     is an E5 / Purview Suite feature); we never call the module on BP
+# When neither applies we run it. The module itself ALSO honours -BPOnly
+# as a defense-in-depth guard for direct callers (the orchestrator never
+# passes -BPOnly on this path because the gate above already excluded BP).
 Write-Host "`n--- [5/5] AI governance (Copilot DLP) ---" -ForegroundColor White
-if ($ApplyAIControls) {
+if (-not $SkipAIControls -and -not $BPOnly) {
     $_taskSw = [System.Diagnostics.Stopwatch]::StartNew()
     Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Module start' -Status 'Started'
     try {
@@ -885,12 +941,20 @@ if ($ApplyAIControls) {
         Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Module complete' -Status 'Failed' -ElapsedMs ([int]$_taskSw.ElapsedMilliseconds) -Detail $_.Exception.Message
         Write-Error $_
     }
+} elseif ($SkipAIControls) {
+    Write-Host "      Skipped (-SkipAIControls)." -ForegroundColor DarkGray
+    Write-Host "      Microsoft 365 Copilot DLP policies in PurviewConfig.psd1 -> AIGovernance" -ForegroundColor DarkGray
+    Write-Host "      will NOT be created or updated this run."                                   -ForegroundColor DarkGray
+    $summary['AI governance'] = 'Skipped (-SkipAIControls)'
+    Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Module' -Status 'Skipped' -Detail '-SkipAIControls was set'
 } else {
-    Write-Host "      Skipped (-ApplyAIControls not set)." -ForegroundColor DarkGray
-    Write-Host "      Re-run with -ApplyAIControls to provision Microsoft 365 Copilot DLP policies" -ForegroundColor DarkGray
-    Write-Host "      defined in PurviewConfig.psd1 -> AIGovernance section."                       -ForegroundColor DarkGray
-    $summary['AI governance'] = 'Skipped (-ApplyAIControls not set)'
-    Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Module' -Status 'Skipped' -Detail '-ApplyAIControls not set (opt-in)'
+    # $BPOnly path (either explicit -BPOnly or auto-detected Business Premium).
+    Write-Host "      Skipped (E5 / Purview Suite required; tenant is Business Premium)." -ForegroundColor DarkGray
+    Write-Host "      Copilot DLP policies are part of the E5 / Purview Suite plane and"  -ForegroundColor DarkGray
+    Write-Host "      cannot be created on Business Premium. Upgrade the SKU or omit"     -ForegroundColor DarkGray
+    Write-Host "      -BPOnly to re-evaluate."                                              -ForegroundColor DarkGray
+    $summary['AI governance'] = 'Skipped (E5 / Purview Suite required; Business Premium tenant)'
+    Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Module' -Status 'Skipped' -Detail '-BPOnly was set (Copilot DLP requires E5 / Purview Suite)'
 }
 
 } finally {

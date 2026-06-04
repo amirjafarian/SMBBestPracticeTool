@@ -13,10 +13,15 @@
         -EnforcementPlanes parameter, an -AdvancedRule body, and
         -RestrictAccess action — none of which apply to legacy
         Exchange / SPO / OneDrive DLP.
-      * They are licensing-gated. Microsoft 365 Copilot per-user licensing
-        is required for the IPPS backend to accept and enforce the rule.
-      * They are opt-in. The deploy script provisions them only when
-        -ApplyAIControls is supplied; default deploys leave them untouched.
+      * They are license-tier gated. The policy plane is part of E5 /
+        Purview Suite, so Setup-AIGovernance auto-skips when called with
+        -BPOnly. Note: the policy enforces against both paid Microsoft
+        365 Copilot AND the free Microsoft 365 Copilot Chat experience
+        (see https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about),
+        so creation succeeds on E5 / Purview Suite tenants regardless
+        of whether paid Copilot per-user SKUs are present.
+      * They are default-on. The deploy script provisions them by default;
+        pass -SkipAIControls to opt out.
       * Future "AI" controls (DSPM-for-AI assessments, agent governance,
         prompt policies) plug into the same AIGovernance.DlpPolicies array.
 
@@ -36,6 +41,13 @@
     Update AI DLP policies / rules that already exist but are not managed
     by this toolkit.
 
+.PARAMETER BPOnly
+    Skip immediately with an "E5 / Purview Suite required" summary entry.
+    The orchestrator already gates the AI step on -BPOnly, but the module
+    honours the switch independently so direct callers (test harnesses,
+    ad-hoc reruns, downstream automation) get the same protection without
+    needing to know the license rules.
+
 .NOTES
     Run AFTER Setup-SensitivityLabels.ps1 in the same deploy invocation so
     that label name resolution (and the soft-delete tombstone remap) is
@@ -47,7 +59,10 @@ param(
     [hashtable] $Config,
 
     [Parameter()]
-    [switch] $AdoptExisting
+    [switch] $AdoptExisting,
+
+    [Parameter()]
+    [switch] $BPOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,6 +71,14 @@ $ConfirmPreference   = 'None'
 
 # Shared retry helper for transient IPPS errors (502, 503, 504, 429, timeouts).
 . (Join-Path $PSScriptRoot 'Invoke-WithTransientRetry.ps1')
+
+if ($BPOnly) {
+    # Module-side defense-in-depth: the orchestrator already gates this step
+    # on -BPOnly, but direct callers (ad-hoc reruns, test harnesses) get
+    # the same guarantee here without needing to know the license rules.
+    Write-Host "AI governance skipped: -BPOnly was set. Microsoft 365 Copilot DLP policies require Microsoft 365 E5 / Purview Suite (the policy plane is not available on Business Premium)." -ForegroundColor Yellow
+    return
+}
 
 if (-not $Config.AIGovernance) {
     Write-Host "AIGovernance section not present in PurviewConfig.psd1; nothing to do." -ForegroundColor DarkGray

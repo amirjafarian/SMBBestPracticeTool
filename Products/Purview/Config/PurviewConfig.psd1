@@ -380,15 +380,18 @@
         Locations = @('Exchange')
     }
 
-    # ----- AI governance & data security (OPT-IN) -----
+    # ----- AI governance & data security (default ON for E5 / Purview Suite) -----
     #
-    # NOT applied by default. Pass -ApplyAIControls to Deploy-PurviewBestPractice.ps1
-    # to provision these policies.
+    # Applied by default. AI governance is auto-skipped on Business Premium
+    # tenants ($BPOnly) because the Microsoft 365 Copilot DLP policy plane
+    # is included in E5 / Purview Suite, not in Business Premium. Opt out
+    # with -SkipAIControls.
     #
-    # Licensing: requires Microsoft 365 Copilot per-user licensing for the
-    # Copilot DLP location to enforce. The IPPS backend rejects the rule
-    # if the tenant has no Copilot licenses; the toolkit logs a clear error
-    # but other steps continue.
+    # Per Microsoft Learn (https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about):
+    # the Microsoft 365 Copilot DLP location protects BOTH paid Microsoft
+    # 365 Copilot AND the free Microsoft 365 Copilot Chat experience, so
+    # policy creation succeeds on E5 / Purview Suite tenants regardless of
+    # whether paid Copilot per-user licenses are present.
     #
     # Per Microsoft Learn (New-DlpCompliancePolicy / New-DlpComplianceRule):
     #   - Locations JSON pins the Copilot location GUID
