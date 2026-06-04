@@ -228,9 +228,16 @@
             'AllEmployees'   # Confidential \ All Employees
             'HCAllEmps'      # Highly Confidential \ All Employees
         )
-        # Mandatory labelling is OFF by default for partner safety. Set to $true
-        # in your fork if you want to require labels on all new content.
-        MandatoryLabelling = $false
+        # Mandatory labelling is ON by default: every Office app (Word /
+        # Excel / PowerPoint / Outlook) will prompt the user to pick a
+        # sensitivity label before they can save a new document or send a
+        # new email. This closes the "untagged content" hole that breaks
+        # DLP rules, auto-classification, and Copilot exclusions, all of
+        # which key off the label. Set to $false in your fork only if the
+        # customer explicitly cannot tolerate the prompt during rollout
+        # (a documented end-user training plan is the better answer).
+        # See docs/End-User-Adoption-Guide.md for the user-facing impact.
+        MandatoryLabelling = $true
         # Justification required when downgrading sensitivity.
         DowngradeJustification = $true
     }
