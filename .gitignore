@@ -3,3 +3,11 @@ Feedback/
 # Per-run HTML/JSON deployment reports written next to the orchestrator
 Products/**/Deploy-*-Report-*.html
 Products/**/Deploy-*-Report-*.json
+
+# Ad-hoc / troubleshooting / manual scripts — not part of the shipped product.
+# Folder shape is preserved via .gitkeep so contributors see the convention.
+Products/**/AdHoc/*
+!Products/**/AdHoc/.gitkeep
+
+# VS Code workspace settings — personal/machine-specific
+.vscode/
