@@ -412,18 +412,48 @@ function Get-LabelByName {
     param(
         [string] $Name,
         [string] $DisplayName,
-        [string] $ParentId
+        [string] $ParentId,
+        # Scope filter for which labels to consider:
+        #   'Any'      - legacy permissive match (default for back-compat). Name
+        #                match is hierarchy-agnostic; DisplayName fallback honours
+        #                the supplied $ParentId (null = top-level).
+        #   'TopLevel' - match only labels with no ParentId.
+        #   'Parent'   - match only labels whose ParentId equals $ParentId. Requires $ParentId.
+        # Use 'TopLevel' for configured-parent lookups and 'Parent' for sub-label
+        # lookups under a known parent. Without an explicit scope a tenant that
+        # has a sub-label with the same internal Name as a configured parent
+        # (common on tenants migrated to the modern label scheme or with the
+        # Microsoft-default labels enabled) will return the sub-label and the
+        # caller will cache it as a "parent", which then breaks Pass 3 Phase A
+        # with InvalidSubLabelPriorityException.
+        [ValidateSet('Any','TopLevel','Parent')]
+        [string] $Scope = 'Any'
     )
-    $byName = $allLabels | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    if ($Scope -eq 'Parent' -and [string]::IsNullOrWhiteSpace($ParentId)) { return $null }
+
+    $candidates = switch ($Scope) {
+        'TopLevel' { $allLabels | Where-Object { -not $_.ParentId } }
+        'Parent'   { $allLabels | Where-Object { $_.ParentId -eq $ParentId } }
+        default    { $allLabels }
+    }
+
+    $byName = $candidates | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
     if ($byName) { return $byName }
 
     if ($DisplayName) {
-        $byDisplay = $allLabels | Where-Object {
-            $_.DisplayName -eq $DisplayName -and (
-                ($ParentId -and $_.ParentId -eq $ParentId) -or
-                (-not $ParentId -and -not $_.ParentId)
-            )
-        } | Select-Object -First 1
+        if ($Scope -eq 'Any') {
+            # Legacy 'Any' scope: DisplayName fallback uses the caller-supplied
+            # ParentId-or-null filter (DisplayName is not tenant-globally unique
+            # like Name is).
+            $byDisplay = $allLabels | Where-Object {
+                $_.DisplayName -eq $DisplayName -and (
+                    ($ParentId -and $_.ParentId -eq $ParentId) -or
+                    (-not $ParentId -and -not $_.ParentId)
+                )
+            } | Select-Object -First 1
+        } else {
+            $byDisplay = $candidates | Where-Object { $_.DisplayName -eq $DisplayName } | Select-Object -First 1
+        }
         if ($byDisplay) { return $byDisplay }
     }
     return $null
@@ -434,13 +464,22 @@ function Get-LabelByName {
 # Get-Label -Identity in New-OrUpdate-Label and is authoritative even for
 # Microsoft-default labels (e.g. 'Public', 'Personal') that bulk Get-Label
 # does not always surface reliably. Falls back to the bulk-cache lookup.
+#
+# The cached object MUST be top-level. If Pass 1 cached a sub-label (which can
+# happen on tenants with name collisions between configured parents and live
+# sub-labels), we return $null and let the caller surface the remediation.
+# Without this guard, Phase A would push the sub-label to priority 0 and hit
+# InvalidSubLabelPriorityException ("priority 0 is invalid for sub-label").
 function Resolve-ConfigParentLabel {
     param([Parameter(Mandatory)] [hashtable] $LabelDef)
     if ($script:createdParents -and $script:createdParents.ContainsKey($LabelDef.Name)) {
         $cached = $script:createdParents[$LabelDef.Name]
-        if ($cached) { return $cached }
+        if ($cached -and -not $cached.ParentId) { return $cached }
+        # Cached object is a sub-label - reject and fall through to bulk lookup
+        # (which is also scope-restricted) so the caller never blindly trusts a
+        # collision-tainted cache entry.
     }
-    return Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName
+    return Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -Scope 'TopLevel'
 }
 
 # Return the most stable identity to pass to IPPS cmdlets. The label Guid is
@@ -716,7 +755,8 @@ function New-OrUpdate-Label {
         [string] $ParentId
     )
 
-    $existing = Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -ParentId $ParentId
+    $existing = Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -ParentId $ParentId `
+        -Scope $(if ($ParentId) { 'Parent' } else { 'TopLevel' })
     $owned     = Test-Owned -Object $existing -Tag $tag
     $matchedBy = $null
     $justCreated = $false   # New-Label succeeded inside this call
@@ -738,6 +778,37 @@ function New-OrUpdate-Label {
     $comment = "$tag $tooltip"
 
     if (-not $existing) {
+        # Cross-scope Name-collision pre-check. IPPS enforces tenant-globally
+        # unique label Names, so if the configured Name collides with a live
+        # label in a DIFFERENT hierarchy scope (typically: configured top-level
+        # vs an existing sub-label of the same Name, common on tenants migrated
+        # to the modern label scheme or with Microsoft-default labels enabled),
+        # New-Label will fail with a cryptic message. Detect upfront and surface
+        # an actionable remediation, otherwise Pass 3 fails later with
+        # InvalidSubLabelPriorityException when the wrong object is reordered.
+        $callerWantsTopLevel = -not $ParentId
+        $nameCollision = $allLabels | Where-Object { $_.Name -eq $LabelDef.Name } | Select-Object -First 1
+        if ($nameCollision) {
+            $collisionIsSubLabel = [bool] $nameCollision.ParentId
+            if ($callerWantsTopLevel -eq $collisionIsSubLabel) {
+                $callerScope = if ($callerWantsTopLevel) { 'top-level' } else { "child of parent Id $ParentId" }
+                $liveScope   = if ($collisionIsSubLabel) { "sub-label of parent Id $($nameCollision.ParentId)" } else { 'top-level' }
+                $collisionGuid = if ($nameCollision.Guid) { [string]$nameCollision.Guid } else { 'unknown' }
+                $detail = @(
+                    "Cannot create configured label '$($LabelDef.Name)' as ${callerScope}: a live label with the same Name already exists in this tenant as a $liveScope (Id: $collisionGuid)."
+                    "Microsoft Purview enforces tenant-globally unique label Names, and the modern label scheme strictly enforces sub-label priority ranges, so this collision must be resolved."
+                    "Remediation options:"
+                    "  1. Rename the configured label in Products/Purview/Config/PurviewConfig.psd1 (change Labels.Name) so it no longer collides."
+                    "  2. In Purview Admin Center (https://purview.microsoft.com), delete or un-nest the colliding live label (Id: $collisionGuid), then re-run."
+                    "  3. If the collision is with a Microsoft-default sensitivity label, keep the default and update the configured Name to a tenant-unique value."
+                ) -join "`n    "
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' `
+                    -Target $LabelDef.DisplayName -Status 'Failed' -Detail $detail
+                Write-Warning "    $detail"
+                return $null
+            }
+        }
+
         if (-not $PSCmdlet.ShouldProcess($LabelDef.Name, 'New-Label')) { return $null }
 
         $newArgs = @{
@@ -777,6 +848,23 @@ function New-OrUpdate-Label {
             if ($msg -match "Duplicate display name '[^']+' is already used by label '([0-9a-f-]{36}[^']*)'") {
                 $existingGuid = $Matches[1]
                 $found = Get-Label -Identity $existingGuid -ErrorAction SilentlyContinue
+                # Validate hierarchy before adopting. Without this check, adopting
+                # a sub-label as a configured top-level parent (or vice versa)
+                # would cache the wrong object in $createdParents and trigger
+                # InvalidSubLabelPriorityException in Phase A.
+                if ($found) {
+                    $callerWantsTopLevel = -not $ParentId
+                    $foundIsSubLabel     = [bool] $found.ParentId
+                    if ($callerWantsTopLevel -eq $foundIsSubLabel) {
+                        $callerScope = if ($callerWantsTopLevel) { 'top-level' } else { "child of parent Id $ParentId" }
+                        $liveScope   = if ($foundIsSubLabel) { "sub-label of parent Id $($found.ParentId)" } else { 'top-level' }
+                        $detail = "Duplicate-display-name adoption for '$($LabelDef.DisplayName)' resolved to live label (Id: $existingGuid) in a DIFFERENT hierarchy scope than configured. Configured scope: $callerScope. Live scope: $liveScope. Refusing to adopt to avoid mis-pinning priority (Phase A would then fail with InvalidSubLabelPriorityException). Rename the configured label or un-nest the live label, then re-run."
+                        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' `
+                            -Target $LabelDef.DisplayName -Status 'Failed' -Detail $detail
+                        Write-Warning "    $detail"
+                        return $null
+                    }
+                }
                 if (-not $found) {
                     $found = [pscustomobject]@{
                         Name        = $existingGuid
@@ -921,6 +1009,45 @@ foreach ($lbl in $Config.Labels) {
     Write-Host "  Label: $($lbl.Name)" -ForegroundColor White
     $parent = New-OrUpdate-Label -LabelDef $lbl
     $script:createdParents[$lbl.Name] = $parent
+}
+
+# ---------------------------------------------------------------------------
+# Pass 1.5 - preflight: enforce that every cached parent is actually a
+# TOP-LEVEL live label. Pass 1's New-OrUpdate-Label already surfaces a Warning
+# + null cache entry when a cross-scope Name collision is detected upfront,
+# but the duplicate-display-name recovery path can also unmask a sub-label.
+# This unified throw gives the operator a single actionable error before
+# Pass 2 wires sub-labels under the wrong object and Pass 3 Phase A explodes
+# with InvalidSubLabelPriorityException on a modern-scheme tenant.
+# ---------------------------------------------------------------------------
+$parentScopeCollisions = @()
+foreach ($lbl in $Config.Labels) {
+    $cached = $script:createdParents[$lbl.Name]
+    if (-not $cached) { continue }  # Pass 1 creation failed; warning already emitted.
+    if ($cached.PSObject.Properties.Name -contains 'ParentId' -and $cached.ParentId) {
+        $parentScopeCollisions += [pscustomobject]@{
+            ConfigName   = $lbl.Name
+            DisplayName  = $lbl.DisplayName
+            LiveGuid     = if ($cached.Guid) { [string]$cached.Guid } else { 'unknown' }
+            LiveParentId = [string]$cached.ParentId
+        }
+    }
+}
+if ($parentScopeCollisions.Count -gt 0) {
+    $lines = foreach ($c in $parentScopeCollisions) {
+        "  - Configured parent label '$($c.ConfigName)' (DisplayName '$($c.DisplayName)') resolved to LIVE label (Id: $($c.LiveGuid)) that is a SUB-LABEL of parent (Id: $($c.LiveParentId))."
+    }
+    $detail = @(
+        "Parent label scope collision detected after Pass 1. The modern label scheme strictly enforces sub-label priority ranges, so a configured top-level label that resolves to an existing sub-label cannot be reordered to priority 0."
+        ($lines -join "`n")
+        "Remediation options:"
+        "  1. Rename the configured label in Products/Purview/Config/PurviewConfig.psd1 (Labels.Name and Labels.DisplayName) so it no longer collides with the existing sub-label."
+        "  2. In Purview Admin Center (https://purview.microsoft.com), edit the colliding live sub-label to move it out from under its parent (or delete it if unused), then re-run."
+        "  3. If the collision is with a Microsoft-default sensitivity label, update the configured Name to a tenant-unique value."
+    ) -join "`n"
+    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Preflight-ParentScope' `
+        -Target 'configured parents' -Status 'Failed' -Detail $detail
+    throw $detail
 }
 
 # ---------------------------------------------------------------------------
@@ -1129,7 +1256,7 @@ foreach ($lbl in $Config.Labels) {
     $childrenCorrect = $true
     $expectedSlot = $firstChildSlot
     foreach ($sub in $lbl.SubLabels) {
-        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid -Scope 'Parent'
         if (-not $subMeta) { $childrenCorrect = $false; break }
         $subLive = Get-LiveLabelByObject -LabelObject $subMeta
         if (-not $subLive -or $subLive.Priority -ne $expectedSlot) { $childrenCorrect = $false; break }
@@ -1139,7 +1266,7 @@ foreach ($lbl in $Config.Labels) {
 
     for ($i = $lbl.SubLabels.Count - 1; $i -ge 0; $i--) {
         $sub = $lbl.SubLabels[$i]
-        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid -Scope 'Parent'
         if (-not $subMeta) {
             Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Set-Label priority=$firstChildSlot" `
                 -Target $sub.DisplayName -Status 'Skipped' `
@@ -1264,7 +1391,11 @@ if ($mismatches.Count -gt 0) {
 }
 if ($mismatches.Count -gt 0) {
     $lines = foreach ($m in $mismatches) {
-        "  - '$($m.Label.DisplayName)' (Id: $($m.Identity)) is at priority $($m.Actual); expected $($m.Expected) [reason: $($m.Reason)]"
+        if ($m.Reason -eq 'unresolved') {
+            "  - '$($m.Label.DisplayName)' could not be resolved as a TOP-LEVEL live label (expected priority $($m.Expected)). Likely a scope collision (a sub-label with the same Name exists in this tenant). See earlier Pass 1 warnings or the Preflight-ParentScope log entry; rename the configured label or un-nest the live label, then re-run."
+        } else {
+            "  - '$($m.Label.DisplayName)' (Id: $($m.Identity)) is at priority $($m.Actual); expected $($m.Expected) [reason: $($m.Reason)]"
+        }
     }
     $detail = "Sensitivity label priority order is incorrect after reorder + recovery:`n" + ($lines -join "`n")
     Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Verify-LabelPriority' `
@@ -1370,7 +1501,7 @@ if ($policyCfg.PublishedLabels -and @($policyCfg.PublishedLabels).Count -gt 0) {
 # matched by DisplayName on an adopted label.
 $allLabelNames = @()
 foreach ($lbl in $Config.Labels) {
-    $resolved = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
+    $resolved = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName -Scope 'TopLevel'
     $includeParent = (-not $publishFilter) -or $publishFilter.Contains($lbl.Name)
     if ($includeParent) {
         if ($resolved) {
@@ -1382,7 +1513,8 @@ foreach ($lbl in $Config.Labels) {
     if ($lbl.SubLabels) {
         $parentId = if ($resolved) { $resolved.Guid } else { $null }
         foreach ($s in $lbl.SubLabels) {
-            $rs = Get-LabelByName -Name $s.Name -DisplayName $s.DisplayName -ParentId $parentId
+            $subScope = if ($parentId) { 'Parent' } else { 'Any' }
+            $rs = Get-LabelByName -Name $s.Name -DisplayName $s.DisplayName -ParentId $parentId -Scope $subScope
             $includeSub = (-not $publishFilter) -or $publishFilter.Contains($s.Name)
             if (-not $includeSub) { continue }
             if ($rs) {
