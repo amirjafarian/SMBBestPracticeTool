@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What's changing in Microsoft 365 — your guide</title>
+<meta name="description" content="End-user adoption guide for the Microsoft Purview baseline rollout. Sensitivity labels, DLP, retention and Copilot — what you'll see and what to do.">
+<style>
+  :root{
+    --brand:#0f6cbd;
+    --brand-dark:#0c4f8a;
+    --bg:#ffffff;
+    --surface:#f7f9fc;
+    --surface-2:#eef3f8;
+    --ink:#1b1b1b;
+    --muted:#5f6b7a;
+    --border:#dfe5ec;
+    --shadow:0 1px 2px rgba(0,0,0,.04), 0 2px 6px rgba(0,0,0,.04);
+
+    /* Status palette — same as the admin overview for consistency */
+    --on:#107c10;        --on-bg:#e6f4ea;        --on-border:#b6dfc3;
+    --opt:#b86e00;       --opt-bg:#fff4e0;       --opt-border:#f0c989;
+    --auto:#005b70;      --auto-bg:#e3f0f3;      --auto-border:#a7ced8;
+    --off:#444;          --off-bg:#eeeeee;       --off-border:#cccccc;
+    --risk:#a4262c;      --risk-bg:#fde7e9;      --risk-border:#f1b5b9;
+    --info:#0f6cbd;      --info-bg:#e8f1fa;      --info-border:#a8cbed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:'Segoe UI Variable','Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--surface);color:var(--ink);
+    font-size:15px;line-height:1.55;
+  }
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px 80px}
+
+  /* ---------- header ---------- */
+  header{
+    background:linear-gradient(140deg,#0f6cbd 0%, #0c4f8a 100%);
+    color:#fff;padding:38px 24px 32px;margin-bottom:28px;
+    border-bottom:1px solid rgba(0,0,0,.05);
+  }
+  header .inner{max-width:1100px;margin:0 auto}
+  header .eyebrow{
+    display:inline-block;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    background:rgba(255,255,255,.18);padding:4px 10px;border-radius:999px;margin-bottom:14px;
+  }
+  header h1{margin:0 0 8px;font-size:30px;font-weight:600;line-height:1.2}
+  header .lede{font-size:17px;line-height:1.5;max-width:780px;color:#eaf3fb;margin:0}
+  header .tldr{
+    margin-top:22px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);
+    border-radius:12px;padding:16px 18px;max-width:880px;
+  }
+  header .tldr strong{color:#fff}
+  header .tldr p{margin:0;color:#f0f6fb;font-size:14.5px;line-height:1.55}
+
+  /* ---------- sections ---------- */
+  section{
+    background:var(--bg);border:1px solid var(--border);border-radius:14px;
+    padding:24px 26px;margin-bottom:22px;box-shadow:var(--shadow);
+  }
+  section > h2{
+    font-size:20px;margin:0 0 6px;display:flex;align-items:center;gap:10px;
+  }
+  section > h2 .num{
+    width:30px;height:30px;border-radius:8px;background:var(--brand);color:#fff;
+    display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;
+  }
+  section > .intro{color:var(--muted);margin:0 0 16px;font-size:14.5px}
+  h3{margin:18px 0 8px;font-size:15.5px}
+  p{margin:8px 0}
+  a{color:var(--brand-dark);text-decoration:none;border-bottom:1px solid transparent}
+  a:hover{border-bottom-color:var(--brand-dark)}
+
+  /* ---------- timeline ---------- */
+  .timeline{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:6px}
+  .phase{
+    border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--bg);
+    position:relative;
+  }
+  .phase .when{
+    display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    padding:3px 8px;border-radius:6px;margin-bottom:8px;
+  }
+  .phase.p1{border-top:4px solid var(--on)}
+  .phase.p1 .when{background:var(--on-bg);color:var(--on);border:1px solid var(--on-border)}
+  .phase.p2{border-top:4px solid var(--auto)}
+  .phase.p2 .when{background:var(--auto-bg);color:var(--auto);border:1px solid var(--auto-border)}
+  .phase.p3{border-top:4px solid var(--opt)}
+  .phase.p3 .when{background:var(--opt-bg);color:var(--opt);border:1px solid var(--opt-border)}
+  .phase h3{margin:0 0 6px;font-size:15px}
+  .phase p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5}
+
+  /* ---------- label cards ---------- */
+  .labels{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:8px}
+  .lbl{
+    border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--bg);
+    position:relative;
+  }
+  .lbl .head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .lbl .dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+  .lbl .nm{font-weight:600}
+  .lbl .lvl{
+    display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+    padding:2px 7px;border-radius:999px;margin-left:auto;
+  }
+  .lbl p{margin:6px 0 0;font-size:13px;color:var(--muted);line-height:1.5}
+  .lbl .use{margin:8px 0 0;font-size:12.5px;color:var(--ink);font-style:italic}
+  .lbl.public  .dot{background:#7a7a7a}
+  .lbl.public  .lvl{background:#eee;color:#444}
+  .lbl.general .dot{background:#107c10}
+  .lbl.general .lvl{background:var(--on-bg);color:var(--on);border:1px solid var(--on-border)}
+  .lbl.conf    .dot{background:#b86e00}
+  .lbl.conf    .lvl{background:var(--opt-bg);color:var(--opt);border:1px solid var(--opt-border)}
+  .lbl.hc      .dot{background:#a4262c}
+  .lbl.hc      .lvl{background:var(--risk-bg);color:var(--risk);border:1px solid var(--risk-border)}
+  .lbl .default-badge{
+    display:inline-block;margin-top:8px;font-size:11px;font-weight:600;
+    padding:2px 7px;border-radius:6px;background:var(--info-bg);color:var(--info);
+    border:1px solid var(--info-border);
+  }
+
+  /* ---------- "what you'll see" mockups ---------- */
+  .mockups{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:8px}
+  .mockup{
+    border:1px solid var(--border);border-radius:10px;background:var(--bg);overflow:hidden;
+  }
+  .mockup .bar{
+    background:var(--surface-2);padding:8px 12px;font-size:12px;font-weight:600;color:var(--muted);
+    border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;
+  }
+  .mockup .bar .dot{width:8px;height:8px;border-radius:50%;background:#dc3545;display:inline-block}
+  .mockup .bar .dot.amber{background:#ffc107}
+  .mockup .bar .dot.green{background:#28a745}
+  .mockup .body{padding:14px;font-size:13.5px;line-height:1.5;color:var(--ink)}
+  .mockup .tip{
+    background:#fff8e1;border:1px solid #ffe082;border-left:4px solid #ffb300;
+    padding:10px 12px;border-radius:6px;font-size:13px;color:#5d4500;margin-top:8px;
+  }
+  .mockup .tip strong{color:#4a3700}
+  .mockup .ribbon{
+    background:#fde7e9;border:1px solid #f1b5b9;border-left:4px solid #a4262c;
+    padding:10px 12px;border-radius:6px;font-size:13px;color:#5a1a1f;
+  }
+  .mockup .footer-text{
+    margin-top:10px;padding:6px 8px;border-top:2px solid #999;color:#555;
+    font-size:11.5px;text-align:center;font-style:italic;
+  }
+  .mockup .watermark{
+    margin-top:6px;text-align:center;color:rgba(164,38,44,.35);
+    font-weight:700;font-size:18px;letter-spacing:.15em;transform:rotate(-8deg);
+    padding:8px;border:1px dashed rgba(164,38,44,.25);
+  }
+
+  /* ---------- DLP "blocked vs allowed" ---------- */
+  .dlp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:8px}
+  .dlp-card{
+    border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--bg);
+    border-left:4px solid var(--border);
+  }
+  .dlp-card.blocked{border-left-color:var(--risk);background:#fdf7f8}
+  .dlp-card.allowed{border-left-color:var(--on);background:#f7fcf8}
+  .dlp-card .verdict{
+    display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:6px;margin-bottom:6px;
+  }
+  .dlp-card.blocked .verdict{background:var(--risk-bg);color:var(--risk);border:1px solid var(--risk-border)}
+  .dlp-card.allowed .verdict{background:var(--on-bg);color:var(--on);border:1px solid var(--on-border)}
+  .dlp-card .scenario{font-weight:600;margin:2px 0 6px}
+  .dlp-card p{margin:0;font-size:13px;color:var(--muted);line-height:1.5}
+
+  /* ---------- howto steps ---------- */
+  .steps{counter-reset:step;list-style:none;padding:0;margin:8px 0 0}
+  .steps li{
+    position:relative;padding:10px 14px 10px 48px;border:1px solid var(--border);
+    border-radius:10px;background:var(--bg);margin-bottom:8px;
+  }
+  .steps li::before{
+    counter-increment:step;content:counter(step);
+    position:absolute;left:12px;top:50%;transform:translateY(-50%);
+    width:26px;height:26px;border-radius:50%;background:var(--brand);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;
+  }
+  .steps li strong{color:var(--ink)}
+
+  /* ---------- callout boxes ---------- */
+  .callout{
+    border:1px solid var(--border);border-left:4px solid var(--info);background:var(--info-bg);
+    border-radius:8px;padding:12px 14px;margin-top:10px;font-size:13.5px;
+  }
+  .callout strong{color:var(--brand-dark)}
+  .callout.warn{border-left-color:var(--opt);background:var(--opt-bg);color:#5a3e00}
+  .callout.warn strong{color:#5a3e00}
+  .callout.danger{border-left-color:var(--risk);background:var(--risk-bg);color:#5a1a1f}
+  .callout.danger strong{color:#5a1a1f}
+  .callout.good{border-left-color:var(--on);background:var(--on-bg);color:#0a3a13}
+  .callout.good strong{color:#0a3a13}
+
+  /* ---------- FAQ ---------- */
+  details.faq{
+    border:1px solid var(--border);border-radius:10px;padding:0;background:var(--bg);
+    margin-bottom:8px;overflow:hidden;
+  }
+  details.faq summary{
+    cursor:pointer;padding:12px 16px;font-weight:600;font-size:14.5px;
+    list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  }
+  details.faq summary::-webkit-details-marker{display:none}
+  details.faq summary::after{
+    content:"+";font-size:20px;color:var(--brand);font-weight:400;flex:0 0 20px;text-align:center;
+  }
+  details.faq[open] summary::after{content:"\2013"}
+  details.faq[open] summary{border-bottom:1px solid var(--border);background:var(--surface)}
+  details.faq .body{padding:12px 16px;color:var(--muted);font-size:13.5px;line-height:1.6}
+  details.faq .body p:first-child{margin-top:0}
+  details.faq .body p:last-child{margin-bottom:0}
+
+  /* ---------- cheat sheet ---------- */
+  .cheat{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .cheat .card{
+    border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--bg);
+  }
+  .cheat .card h4{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .cheat .card .ico{font-size:18px}
+  .cheat .card ul{margin:0;padding-left:18px;font-size:13px;color:var(--muted);line-height:1.6}
+
+  /* ---------- references ---------- */
+  .refs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-top:8px}
+  .refs a{
+    display:block;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    font-size:13.5px;color:var(--brand-dark);background:var(--bg);
+  }
+  .refs a:hover{background:var(--surface);border-color:var(--brand)}
+  .refs a small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+
+  footer{
+    text-align:center;color:var(--muted);font-size:12px;padding:20px 0 0;
+  }
+
+  /* small print and a11y polish */
+  ul,ol{padding-left:22px}
+  ul li,ol li{margin:4px 0}
+  code{background:var(--surface);padding:1px 5px;border-radius:4px;font-size:13px;border:1px solid var(--border)}
+
+  @media print{
+    body{background:#fff;font-size:11.5px}
+    header{background:#fff;color:var(--ink);border-bottom:2px solid var(--brand);
+      padding-top:0;padding-bottom:16px}
+    header .lede{color:var(--muted)}
+    header .tldr{background:#f5f7fa;color:var(--ink);border-color:var(--border)}
+    header .tldr p{color:var(--ink)}
+    section{box-shadow:none;break-inside:avoid;page-break-inside:avoid;margin-bottom:14px}
+    details.faq{break-inside:avoid}
+    details.faq[open] summary{background:#fff}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <span class="eyebrow">Microsoft 365 &middot; What's changing</span>
+    <h1>New data-protection features are coming to your Microsoft 365</h1>
+    <p class="lede">A friendly guide to the new <strong>Sensitivity</strong> button in Word, Excel, PowerPoint and Outlook &mdash; and what happens when you label a file or email.</p>
+
+    <div class="tldr">
+      <p><strong>TL;DR &mdash;</strong> Your IT team is turning on Microsoft's standard data-protection features. You'll see a new <strong>Sensitivity</strong> button in Office apps. <strong>For the first 30 days nothing is blocked</strong> &mdash; IT is just watching. After 30 days, files and emails labelled <em>Confidential</em> or <em>Highly Confidential</em> can no longer be shared with people outside the company. <em>General</em> and <em>Public</em> work as normal &mdash; no change to your day-to-day inbox.</p>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ============ Phases ============ -->
+<section id="phases">
+  <h2><span class="num">1</span> The rollout, in three phases</h2>
+  <p class="intro">Most of the changes don't actually <em>block</em> anything until Day 30. Until then, everything still works exactly as it does today.</p>
+  <div class="timeline">
+    <div class="phase p1">
+      <span class="when">Day 1 &middot; Labels arrive</span>
+      <h3>You see a new <em>Sensitivity</em> button</h3>
+      <p>Word, Excel, PowerPoint and Outlook get a Sensitivity button. New emails default to <strong>General</strong>. New documents default to <strong>Confidential &mdash; All Employees</strong>. <strong>Nothing is blocked.</strong></p>
+    </div>
+    <div class="phase p2">
+      <span class="when">Day 1&ndash;30 &middot; Quiet monitoring</span>
+      <h3>IT watches, you keep working</h3>
+      <p>Microsoft Purview is in simulation mode. <strong>You won't be blocked from anything</strong>, no pop-ups, no policy tips. IT collects telemetry on what <em>would</em> have been blocked so they can tune the rules.</p>
+    </div>
+    <div class="phase p3">
+      <span class="when">Day 30+ &middot; Enforcement</span>
+      <h3>Sharing rules switch on</h3>
+      <p>If you try to send or share <em>Confidential</em> or <em>Highly Confidential</em> content externally, you'll see a banner explaining the block. Internal sharing keeps working normally.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ The labels ============ -->
+<section id="labels">
+  <h2><span class="num">2</span> The four labels you'll actually pick</h2>
+  <p class="intro">Your IT may publish more labels later (e.g. sub-labels for specific people), but these four cover almost everything you do day-to-day.</p>
+
+  <div class="labels">
+    <div class="lbl public">
+      <div class="head"><span class="dot"></span><span class="nm">Public</span><span class="lvl">No protection</span></div>
+      <p>Use for marketing material, press releases &mdash; anything explicitly approved for the world to see.</p>
+      <p class="use">Nothing is added to the file or email.</p>
+    </div>
+    <div class="lbl general">
+      <div class="head"><span class="dot"></span><span class="nm">General</span><span class="lvl">No protection</span></div>
+      <p>Routine internal email and documents you might share with trusted external partners (vendors, customers under NDA).</p>
+      <p class="use">Nothing is added to the file or email.</p>
+      <span class="default-badge">Default for new emails</span>
+    </div>
+    <div class="lbl conf">
+      <div class="head"><span class="dot"></span><span class="nm">Confidential &mdash; All Employees</span><span class="lvl">Footer marking</span></div>
+      <p>Internal-only content: contracts, plans, customer data, anything regulated.</p>
+      <p class="use">A footer "Classified as Confidential" may appear; <strong>external sharing is blocked after Day 30</strong>.</p>
+      <span class="default-badge">Default for new documents</span>
+    </div>
+    <div class="lbl hc">
+      <div class="head"><span class="dot"></span><span class="nm">Highly Confidential &mdash; All Employees</span><span class="lvl">Encrypted</span></div>
+      <p>Source code, pre-announce financials, employee PII, payroll, M&amp;A.</p>
+      <p class="use"><strong>File is encrypted</strong> &mdash; only people in our organisation can open it. Watermark "HIGHLY CONFIDENTIAL" and footer added. External sharing blocked after Day 30. Microsoft 365 Copilot will not summarise or ground on these files.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ What you'll see in apps ============ -->
+<section id="mockups">
+  <h2><span class="num">3</span> What it looks like in your apps</h2>
+  <p class="intro">Three things start showing up in Office, Outlook and SharePoint. Here's a preview so it isn't a surprise.</p>
+
+  <div class="mockups">
+
+    <!-- Sensitivity button -->
+    <div class="mockup">
+      <div class="bar"><span class="dot"></span><span class="dot amber"></span><span class="dot green"></span><span>Word &middot; New document</span></div>
+      <div class="body">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Home &nbsp;|&nbsp; Insert &nbsp;|&nbsp; Layout &nbsp;|&nbsp; ...</div>
+        <div style="display:inline-block;padding:6px 12px;border:1px solid var(--brand);border-radius:6px;color:var(--brand-dark);font-weight:600;font-size:13px">&#128274; Sensitivity: Confidential &mdash; All Employees &#9660;</div>
+        <div class="callout" style="margin-top:10px;font-size:12.5px">Click the button to change the label. New documents start at Confidential &mdash; All Employees by default.</div>
+        <div class="footer-text">Classified as Confidential</div>
+      </div>
+    </div>
+
+    <!-- Outlook policy tip -->
+    <div class="mockup">
+      <div class="bar"><span class="dot"></span><span class="dot amber"></span><span class="dot green"></span><span>Outlook &middot; Composing a message</span></div>
+      <div class="body">
+        <div style="font-size:12.5px;color:var(--muted)">To: <strong style="color:var(--ink)">someone@partner.com</strong></div>
+        <div style="font-size:12.5px;color:var(--muted)">Subject: <strong style="color:var(--ink)">Q4 board pack</strong></div>
+        <div class="tip"><strong>&#9888;&#65039; Policy tip:</strong> This message contains content labelled <em>Confidential</em>. After the monitoring period it cannot be sent to external recipients.</div>
+        <div class="callout warn" style="margin-top:10px;font-size:12.5px">The tip appears <strong>before</strong> you click Send so you can correct course.</div>
+      </div>
+    </div>
+
+    <!-- Highly Confidential -->
+    <div class="mockup">
+      <div class="bar"><span class="dot"></span><span class="dot amber"></span><span class="dot green"></span><span>Excel &middot; Highly Confidential workbook</span></div>
+      <div class="body">
+        <div style="display:inline-block;padding:6px 12px;border:1px solid var(--risk);border-radius:6px;color:var(--risk);font-weight:600;font-size:13px;background:var(--risk-bg)">&#128274; Sensitivity: Highly Confidential &#9660;</div>
+        <div class="watermark">HIGHLY CONFIDENTIAL</div>
+        <div class="callout danger" style="font-size:12.5px"><strong>Encrypted.</strong> Only people in our organisation can open this file. If it ends up on a USB or personal Gmail, it cannot be read.</div>
+        <div class="footer-text">Classified as Highly Confidential</div>
+      </div>
+    </div>
+
+    <!-- SharePoint sharing block -->
+    <div class="mockup">
+      <div class="bar"><span class="dot"></span><span class="dot amber"></span><span class="dot green"></span><span>SharePoint &middot; Share dialog</span></div>
+      <div class="body">
+        <div style="font-size:12.5px;color:var(--muted)">Share <strong style="color:var(--ink)">budget-2026.xlsx</strong></div>
+        <div style="font-size:12.5px;color:var(--muted)">To: <strong style="color:var(--ink)">guest@external.com</strong></div>
+        <div class="ribbon" style="margin-top:8px"><strong>&#128683; Blocked &mdash;</strong> This file contains <em>Confidential</em> content that cannot be shared outside our organisation. Contact the helpdesk if there is a business need.</div>
+        <div class="callout" style="font-size:12.5px;margin-top:8px">Internal share &mdash; same file, same person inside the company &mdash; works as normal.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ How to label / change ============ -->
+<section id="howto">
+  <h2><span class="num">4</span> How to pick (or change) a label</h2>
+  <p class="intro">Labels live on a single Sensitivity button at the top of every Office app. Picking one takes about three seconds.</p>
+
+  <h3>To set or change the label</h3>
+  <ol class="steps">
+    <li>Open the file in Word / Excel / PowerPoint, or open a new email in Outlook.</li>
+    <li>Click the <strong>Sensitivity</strong> button on the ribbon (top-right area).</li>
+    <li>Pick the right label. The visible marking (footer, watermark) updates immediately. <strong>Save</strong> to persist.</li>
+  </ol>
+
+  <h3>If you need to lower the sensitivity (e.g. share externally)</h3>
+  <ol class="steps">
+    <li>Click <strong>Sensitivity</strong>, pick the lower label (e.g. <em>General</em> or <em>Public</em>).</li>
+    <li>Office will prompt you for a brief <strong>justification</strong> &mdash; type a short sentence (e.g. <em>"Approved for external release."</em>).</li>
+    <li>Click <strong>OK</strong>. The change is logged for audit but no one has to approve it &mdash; you continue working straight away.</li>
+  </ol>
+
+  <div class="callout good">
+    <strong>Good to know.</strong> Old documents and emails are <em>not</em> relabelled automatically &mdash; the default only applies to <strong>new</strong> content. Existing files keep whatever label (or no label) they have today.
+  </div>
+</section>
+
+<!-- ============ What gets blocked / what doesn't ============ -->
+<section id="dlp">
+  <h2><span class="num">5</span> What gets blocked after Day 30 &mdash; and what doesn't</h2>
+  <p class="intro">Only externally addressed shares of <em>Confidential</em> or <em>Highly Confidential</em> content are blocked. Everything else works as normal.</p>
+
+  <div class="dlp-grid">
+    <div class="dlp-card blocked">
+      <span class="verdict">&#128683; Blocked</span>
+      <div class="scenario">Outlook &middot; Email a <em>Confidential</em> file to gmail.com / a partner</div>
+      <p>A yellow banner explains the block. Click Send and the message is stopped. The file owner and site admin are notified.</p>
+    </div>
+    <div class="dlp-card allowed">
+      <span class="verdict">&#9989; Allowed</span>
+      <div class="scenario">Outlook &middot; Email the same file to a colleague inside the company</div>
+      <p>Internal email flows normally. The footer marking is preserved.</p>
+    </div>
+    <div class="dlp-card blocked">
+      <span class="verdict">&#128683; Blocked</span>
+      <div class="scenario">SharePoint / OneDrive &middot; Share a <em>Confidential</em> file with an external guest or anonymous link</div>
+      <p>The Share dialog blocks the action with a message. Internal sharing remains available.</p>
+    </div>
+    <div class="dlp-card allowed">
+      <span class="verdict">&#9989; Allowed</span>
+      <div class="scenario">Anything labelled <em>General</em> or <em>Public</em></div>
+      <p>Routine work email and public material flow normally. No tip, no block, no change.</p>
+    </div>
+    <div class="dlp-card blocked">
+      <span class="verdict">&#128683; Blocked</span>
+      <div class="scenario">Anyone outside the company who somehow receives a <em>Highly Confidential</em> file</div>
+      <p>The file is encrypted &mdash; it can't be opened without a Microsoft 365 identity in our organisation.</p>
+    </div>
+    <div class="dlp-card allowed">
+      <span class="verdict">&#9989; Allowed</span>
+      <div class="scenario">Inside the company &mdash; view, edit, save, reply, reply-all, forward</div>
+      <p>Every employee can collaborate on encrypted files inside the organisation. Co-authoring may be limited if IT chose the conservative profile &mdash; ask helpdesk if you hit a co-author issue.</p>
+    </div>
+  </div>
+
+  <div class="callout warn" style="margin-top:14px">
+    <strong>Can I override a block myself?</strong> No &mdash; not in the default setup. If you have a legitimate business need (e.g. sharing a labelled contract with the customer it relates to), contact the helpdesk. They can adjust the rule or share the file through an approved channel.
+  </div>
+</section>
+
+<!-- ============ Microsoft 365 Copilot ============ -->
+<section id="copilot">
+  <h2><span class="num">6</span> Microsoft 365 Copilot &mdash; what changes</h2>
+  <p class="intro">If your tenant has Microsoft 365 Copilot, one extra rule applies.</p>
+
+  <div class="callout">
+    <strong>Copilot will ignore <em>Highly Confidential</em> files.</strong> When you ask Copilot to summarise, find or ground on something, anything labelled <em>Highly Confidential</em> is excluded from the answer &mdash; even if you personally have read access to it. This is intentional, to keep the most sensitive content out of AI prompts and responses.
+  </div>
+
+  <p><strong>Workaround.</strong> If you legitimately need Copilot to read the content, either relabel the file to <em>Confidential &mdash; All Employees</em> (with downgrade justification, if the content allows it) or open and summarise the file yourself.</p>
+</section>
+
+<!-- ============ Retention ============ -->
+<section id="retention">
+  <h2><span class="num">7</span> Email retention &mdash; what happens to old mail</h2>
+  <p class="intro">If your IT team enabled the optional 7-year retention policy:</p>
+
+  <ul>
+    <li>Mailbox content older than <strong>7 years</strong> is automatically deleted.</li>
+    <li>This applies across your whole mailbox &mdash; Inbox, Sent Items, even items you "deleted" months ago are kept hidden for the full 7 years before hard-removal.</li>
+    <li>You don't have to do anything. There is no warning at deletion time and no "trash" to recover from after the 7-year mark.</li>
+  </ul>
+
+  <div class="callout warn">
+    <strong>Need to keep something longer?</strong> Move it out of your mailbox &mdash; save the email as a <code>.msg</code> or <code>.pdf</code> in a SharePoint library, move the file into a team site, or ask IT for a longer retention policy on your team's mailbox.
+  </div>
+</section>
+
+<!-- ============ Cheat sheet ============ -->
+<section id="cheat">
+  <h2><span class="num">8</span> Cheat sheet</h2>
+  <p class="intro">Print this section or pin it on your desktop &mdash; it covers 95% of day-to-day questions.</p>
+
+  <div class="cheat">
+    <div class="card">
+      <h4><span class="ico">&#128221;</span>Picking a label</h4>
+      <ul>
+        <li>Public material &rarr; <strong>Public</strong></li>
+        <li>Internal &amp; trusted partners &rarr; <strong>General</strong></li>
+        <li>Contracts, customer data &rarr; <strong>Confidential</strong></li>
+        <li>Payroll, source, M&amp;A &rarr; <strong>Highly Confidential</strong></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="ico">&#8595;&#65039;</span>Lowering a label</h4>
+      <ul>
+        <li>Click <strong>Sensitivity</strong></li>
+        <li>Pick lower label</li>
+        <li>Type a one-line reason</li>
+        <li>Continue working</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="ico">&#128683;</span>If you're blocked</h4>
+      <ul>
+        <li>Read the banner &mdash; it tells you why</li>
+        <li>If valid, relabel to a lower level</li>
+        <li>If you can't, contact <strong>helpdesk</strong></li>
+        <li>Don't keep retrying &mdash; logs build up</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="ico">&#128241;</span>On mobile / Mac / web</h4>
+      <ul>
+        <li>Outlook mobile &mdash; full support</li>
+        <li>Office for Mac / iPad &mdash; full support</li>
+        <li>Office on the web &mdash; full support</li>
+        <li>3rd-party apps &mdash; may struggle with encrypted files</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="ico">&#127968;</span>Working from home</h4>
+      <ul>
+        <li>Labels &amp; DLP work anywhere &mdash; they're tied to your account, not the office network</li>
+        <li>Open an encrypted file online at least once every 30 days</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="ico">&#128172;</span>Need help?</h4>
+      <ul>
+        <li>"Should this be labelled higher?" &rarr; ask your manager or helpdesk</li>
+        <li>Stuck on a block &rarr; helpdesk</li>
+        <li>Co-author issue on an encrypted file &rarr; helpdesk</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq">
+  <h2><span class="num">9</span> Frequently asked questions</h2>
+
+  <details class="faq">
+    <summary>Will my old documents and emails suddenly be labelled?</summary>
+    <div class="body"><p>No. Existing content is not relabelled automatically. The default only applies to <strong>new</strong> content created after the rollout. You can choose to label old content manually.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>Will I be unable to send any external email?</summary>
+    <div class="body"><p>No. Only emails you have <strong>explicitly labelled</strong> <em>Confidential</em> or <em>Highly Confidential</em> are blocked externally. Routine <em>General</em> email flows normally &mdash; this is the majority of what you send.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>My document auto-got <em>Confidential &mdash; All Employees</em>, but I need to share it externally. What do I do?</summary>
+    <div class="body"><p>Open the document, click <strong>Sensitivity &rarr; General</strong> (or <em>Public</em>), provide a brief justification when prompted, then share normally.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>Will labels and DLP work outside the office, on my home laptop?</summary>
+    <div class="body"><p>Yes &mdash; the protections are tied to your Microsoft 365 identity, not the office network. They follow you wherever you sign in to Office.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>Will labels work on my phone (Outlook mobile)?</summary>
+    <div class="body"><p>Yes. Outlook mobile (iOS and Android) supports applying and viewing sensitivity labels.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>Will a labelled file open on a Mac, iPad, or the web?</summary>
+    <div class="body"><p>Yes for Office apps (Word/Excel/PowerPoint/Outlook on Mac, iOS, Android and the web). Third-party apps that don't understand Microsoft Information Protection may struggle with encrypted (Highly Confidential) files.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>What happens if I email a labelled doc to a personal Gmail / Hotmail?</summary>
+    <div class="body"><p>After Day 30, blocked. During the first 30-day monitoring window, allowed but logged.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>I deleted an email less than 7 years old &mdash; is it really gone?</summary>
+    <div class="body"><p>No &mdash; under a retention policy, items "deleted" by you are kept in a hidden recoverable-items area until the 7-year mark. After 7 years they're hard-deleted.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>How do labels affect Teams chat?</summary>
+    <div class="body"><p>Files shared in Teams chat live in OneDrive and inherit the same DLP rules as direct OneDrive shares. So a <em>Confidential</em> file dropped into a Teams chat with an external guest will be blocked the same way as a direct external share.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>Who can I ask if a file should be labelled higher or lower?</summary>
+    <div class="body"><p>Your manager or the helpdesk. As a rule of thumb: if it contains employee or customer PII, financials, source code, contracts, or anything regulated &mdash; use <strong>Confidential</strong> or higher.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>I opened a Highly Confidential file at the weekend and now it won't open. Why?</summary>
+    <div class="body"><p>Encrypted files re-check your access every 30 days. If you're offline for longer than that, the file locks until you reconnect. Sign in once on a connected device and you're back in.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>What's NOT covered in this guide?</summary>
+    <div class="body"><p>This guide describes only what the Microsoft Purview baseline deploys. Your IT team may layer additional controls (Conditional Access, device compliance, MFA, mailbox auto-forward blocks, external-link expiry, etc.). If you encounter behaviour that's not described here, it's likely one of those &mdash; start with the helpdesk.</p></div>
+  </details>
+</section>
+
+<!-- ============ References ============ -->
+<section id="refs">
+  <h2><span class="num">10</span> Learn more (Microsoft Learn)</h2>
+  <p class="intro">Official Microsoft documentation if you want to dig deeper.</p>
+  <div class="refs">
+    <a href="https://learn.microsoft.com/purview/sensitivity-labels" target="_blank" rel="noopener">Sensitivity labels overview<small>learn.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/sensitivity-labels-office-apps" target="_blank" rel="noopener">Sensitivity labels in Office apps<small>learn.microsoft.com</small></a>
+    <a href="https://support.microsoft.com/office/2f96e7cd-d5a4-403b-8bd7-4cc636bae0f9" target="_blank" rel="noopener">Apply a label (end-user how-to)<small>support.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/encryption-sensitivity-labels" target="_blank" rel="noopener">Encryption with sensitivity labels<small>learn.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/dlp-policy-tips-reference" target="_blank" rel="noopener">DLP policy tips reference<small>learn.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/use-notifications-and-policy-tips" target="_blank" rel="noopener">DLP notifications and policy tips<small>learn.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/retention-policies-exchange" target="_blank" rel="noopener">Retention policies for Exchange<small>learn.microsoft.com</small></a>
+    <a href="https://learn.microsoft.com/purview/ai-microsoft-purview" target="_blank" rel="noopener">Copilot data protection (Purview)<small>learn.microsoft.com</small></a>
+  </div>
+</section>
+
+<footer>
+  This guide reflects the Microsoft Purview baseline deployed by the SMBTool toolkit. &middot; Your IT team may have customised some settings &mdash; if anything differs, the helpdesk is your source of truth.
+</footer>
+
+</div>
+</body>
+</html>

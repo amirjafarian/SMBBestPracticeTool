@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>What the Purview Best Practice Toolkit does in your tenant</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{
+    --bg:#ffffff;
+    --surface:#f6f8fa;
+    --surface-2:#eef2f6;
+    --text:#1f2328;
+    --muted:#57606a;
+    --border:#d0d7de;
+    --border-strong:#afb8c1;
+
+    --brand:#0f6cbd;       /* Fluent blue */
+    --brand-bg:#eaf3fb;
+
+    --on:#107c10;          /* default-on green */
+    --on-bg:#eaf6ea;
+    --on-border:#b6d7b6;
+
+    --opt:#b76e00;         /* opt-in amber */
+    --opt-bg:#fff4dd;
+    --opt-border:#f1c98a;
+
+    --auto:#0a6e8a;        /* auto-detected teal */
+    --auto-bg:#e3f1f6;
+    --auto-border:#a8d4e0;
+
+    --off:#57606a;         /* skip/off gray */
+    --off-bg:#eef2f6;
+    --off-border:#cbd3da;
+
+    --risk:#a72525;        /* destructive red */
+    --risk-bg:#fdecec;
+    --risk-border:#f0b7b7;
+
+    --shadow:0 1px 2px rgba(31,35,40,.06), 0 4px 12px rgba(31,35,40,.04);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--brand);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{color:var(--text);margin:0 0 .5em 0;font-weight:600;letter-spacing:-.01em}
+  h1{font-size:30px;line-height:1.2}
+  h2{font-size:20px;margin-top:0}
+  h3{font-size:16px;margin-top:0}
+  code,kbd{font:13px/1.4 ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,monospace;
+    background:var(--surface);padding:2px 6px;border-radius:4px;border:1px solid var(--border)}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 28px 80px}
+
+  /* Header */
+  header.page{padding:36px 32px;border:1px solid var(--border);border-radius:14px;
+    background:linear-gradient(180deg,#fafcff 0%,#f3f7fc 100%);box-shadow:var(--shadow);margin-bottom:28px}
+  header.page .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--brand);font-weight:600;margin-bottom:6px}
+  header.page h1{margin:0 0 8px 0}
+  header.page p.lede{margin:0;color:var(--muted);font-size:16px;max-width:75ch}
+
+  /* Color legend */
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 0 0}
+  .legend .pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;
+    padding:5px 10px;border-radius:999px;border:1px solid;line-height:1}
+  .pill .dot{width:8px;height:8px;border-radius:50%}
+  .pill.on{background:var(--on-bg);border-color:var(--on-border);color:var(--on)}
+  .pill.on .dot{background:var(--on)}
+  .pill.opt{background:var(--opt-bg);border-color:var(--opt-border);color:var(--opt)}
+  .pill.opt .dot{background:var(--opt)}
+  .pill.auto{background:var(--auto-bg);border-color:var(--auto-border);color:var(--auto)}
+  .pill.auto .dot{background:var(--auto)}
+  .pill.off{background:var(--off-bg);border-color:var(--off-border);color:var(--off)}
+  .pill.off .dot{background:var(--off)}
+  .pill.risk{background:var(--risk-bg);border-color:var(--risk-border);color:var(--risk)}
+  .pill.risk .dot{background:var(--risk)}
+
+  /* Section + cards */
+  section{margin:32px 0 0 0}
+  section > h2{display:flex;align-items:center;gap:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  section > h2 .num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;
+    background:var(--brand);color:#fff;font-size:13px;font-weight:600}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));margin-top:14px}
+  .card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+  .card.on{border-left:4px solid var(--on)}
+  .card.opt{border-left:4px solid var(--opt)}
+  .card.auto{border-left:4px solid var(--auto)}
+  .card.off{border-left:4px solid var(--off)}
+  .card.risk{border-left:4px solid var(--risk)}
+  .card h3{margin-bottom:6px}
+  .card .meta{color:var(--muted);font-size:13px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
+  .card ul{margin:8px 0 0 0;padding:0 0 0 18px}
+  .card ul li{margin:3px 0}
+
+  /* Tables */
+  .tbl{width:100%;border-collapse:collapse;margin-top:14px;background:var(--bg);
+    border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+  .tbl th,.tbl td{padding:11px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border);font-size:14px}
+  .tbl th{background:var(--surface);color:var(--muted);font-weight:600;font-size:12.5px;
+    letter-spacing:.02em;text-transform:uppercase}
+  .tbl tr:last-child td{border-bottom:none}
+  .tbl tr.sublabel td:first-child{padding-left:34px;position:relative}
+  .tbl tr.sublabel td:first-child::before{content:"\21B3";position:absolute;left:16px;color:var(--muted)}
+
+  /* Inline tag */
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:4px;
+    border:1px solid;line-height:1.4;white-space:nowrap}
+  .tag.on{background:var(--on-bg);border-color:var(--on-border);color:var(--on)}
+  .tag.opt{background:var(--opt-bg);border-color:var(--opt-border);color:var(--opt)}
+  .tag.auto{background:var(--auto-bg);border-color:var(--auto-border);color:var(--auto)}
+  .tag.off{background:var(--off-bg);border-color:var(--off-border);color:var(--off)}
+  .tag.risk{background:var(--risk-bg);border-color:var(--risk-border);color:var(--risk)}
+  .tag.brand{background:var(--brand-bg);border-color:#c8defa;color:var(--brand)}
+
+  /* Label hierarchy visual */
+  .labels{margin-top:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg);box-shadow:var(--shadow)}
+  .label-row{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:14px;
+    padding:13px 16px;border-bottom:1px solid var(--border)}
+  .label-row:last-child{border-bottom:none}
+  .label-row.child{padding-left:60px;background:var(--surface);grid-template-columns:34px 1fr auto}
+  .label-row .pri{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;font-weight:600;
+    color:var(--muted);text-align:center;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:6px;padding:3px 0;width:30px}
+  .label-row .name{font-weight:600}
+  .label-row .name small{display:block;color:var(--muted);font-weight:400;font-size:12.5px;margin-top:2px}
+  .label-row .name .scope{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;
+    font-size:12px;font-weight:400;color:var(--muted)}
+  .label-row .name .scope .label-prefix{font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-size:10.5px}
+  .label-row .name .scope .chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+    border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12px;line-height:1.4}
+  .label-row .name .scope .chip.muted{opacity:.55;border-style:dashed}
+  .label-row .name .scope .chip .ico{font-size:12.5px;line-height:1}
+  .label-row .tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+
+  /* Note callout */
+  .note{margin-top:14px;padding:12px 16px;border-radius:8px;border:1px solid;font-size:14px;display:flex;gap:10px}
+  .note .ico{font-weight:700}
+  .note.info{background:var(--brand-bg);border-color:#c8defa;color:#0b4b87}
+  .note.risk{background:var(--risk-bg);border-color:var(--risk-border);color:var(--risk)}
+  .note.opt{background:var(--opt-bg);border-color:var(--opt-border);color:#7a4900}
+
+  /* Footer */
+  footer.page{margin-top:48px;padding-top:18px;border-top:1px solid var(--border);
+    color:var(--muted);font-size:12.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+  /* TOC */
+  nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0 0;padding:0;list-style:none}
+  nav.toc a{display:inline-block;padding:6px 12px;border:1px solid var(--border);border-radius:999px;
+    background:var(--surface);color:var(--text);font-size:13px}
+  nav.toc a:hover{background:var(--brand-bg);border-color:#c8defa;color:var(--brand);text-decoration:none}
+
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none;padding:0}
+    header.page{box-shadow:none;background:#fff}
+    .card,.tbl,.labels{box-shadow:none}
+    nav.toc{display:none}
+    a{color:var(--text);text-decoration:none}
+  }
+  @media (max-width:680px){
+    h1{font-size:24px}
+    .wrap{padding:18px 14px 48px}
+    .label-row{grid-template-columns:30px 1fr;gap:8px}
+    .label-row .tags{grid-column:1 / -1;justify-content:flex-start;padding-left:38px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page">
+  <div class="eyebrow">Microsoft Purview Best Practice Toolkit</div>
+  <h1>What this script does in your tenant</h1>
+  <p class="lede">A single-page summary of every change the toolkit makes when you run
+    <code>Deploy-PurviewBestPractice.ps1</code>. Read this before deploying so you (and your
+    customer) know exactly what will land in the tenant, what is on by default, and what is
+    explicitly opt-in.</p>
+
+  <div class="legend" aria-label="Color legend">
+    <span class="pill on"><span class="dot"></span>Default ON &mdash; always applied</span>
+    <span class="pill opt"><span class="dot"></span>Optional &mdash; you must pass a switch</span>
+    <span class="pill auto"><span class="dot"></span>Auto-detected &mdash; turned on based on tenant licence</span>
+    <span class="pill off"><span class="dot"></span>Off by default &mdash; safe to ignore</span>
+    <span class="pill risk"><span class="dot"></span>Destructive / partner-decision</span>
+  </div>
+
+  <nav class="toc">
+    <a href="#modes">Run modes</a>
+    <a href="#tasks">5 tasks at a glance</a>
+    <a href="#tenant">Tenant settings</a>
+    <a href="#labels">Sensitivity labels</a>
+    <a href="#publish">Label publishing</a>
+    <a href="#dlp">DLP policies</a>
+    <a href="#retention">Retention</a>
+    <a href="#ai">AI governance</a>
+    <a href="#safety">Safety guarantees</a>
+  </nav>
+</header>
+
+<!-- ============================================================= -->
+<section id="modes">
+  <h2><span class="num">1</span> Run modes &mdash; how the script behaves when you launch it</h2>
+  <div class="grid">
+    <div class="card on">
+      <h3>Apply <span class="tag on">Default</span></h3>
+      <div class="meta">No switch needed</div>
+      <p>Every change is applied to the tenant. The script asks for confirmation once at
+        the start (skip with <code>-NonInteractive</code>).</p>
+    </div>
+    <div class="card opt">
+      <h3>Preview <span class="tag opt">-WhatIf</span></h3>
+      <div class="meta">Read-only</div>
+      <p>Walks through every step and prints what <em>would</em> happen, without writing
+        anything to the tenant. Use this for change-approval review.</p>
+    </div>
+    <div class="card opt">
+      <h3>Per-action prompt <span class="tag opt">-Confirm</span></h3>
+      <div class="meta">Interactive</div>
+      <p>Pauses before each individual change. Useful when migrating an existing tenant and
+        you want to inspect each step.</p>
+    </div>
+    <div class="card off">
+      <h3>Unattended <span class="tag off">-NonInteractive</span></h3>
+      <div class="meta">CI / automation</div>
+      <p>Skips the preflight confirmation. Combined with <code>-AutoInstallModules</code>
+        the script runs end-to-end with no human input. Tenant-identity guard still aborts
+        on mismatch before any write.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="tasks">
+  <h2><span class="num">2</span> Five tasks &mdash; what the script touches, in order</h2>
+  <div class="grid">
+    <div class="card on">
+      <h3>1. Tenant settings <span class="tag on">Default</span></h3>
+      <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels, label co-authoring.</p>
+      <p class="meta"><span class="tag opt">-EnableContainerLabels</span> <span class="tag opt">-EnablePremiumAudit</span></p>
+    </div>
+    <div class="card on">
+      <h3>2. Sensitivity labels <span class="tag on">Default</span></h3>
+      <p>Creates the 3 parent &amp; 6 sub-labels, orders them, applies encryption to Highly Confidential, and publishes the user-facing subset.</p>
+      <p class="meta"><span class="tag opt">-SkipLabels</span> to opt out</p>
+    </div>
+    <div class="card on">
+      <h3>3. DLP <span class="tag on">Default</span></h3>
+      <p>Two policies block external sharing of Confidential / Highly Confidential content &mdash; one for Exchange, one for SharePoint+OneDrive.</p>
+      <p class="meta"><span class="tag opt">-SkipDLP</span> to opt out &middot; created in <strong>simulation</strong> by default</p>
+    </div>
+    <div class="card opt">
+      <h3>4. Retention <span class="tag opt">Opt-in</span></h3>
+      <p>7-year retain-then-delete on Exchange mailboxes. <strong>Off by default</strong> &mdash; you must pass <code>-ApplyRetention</code> after confirming the duration matches the customer's vertical.</p>
+      <p class="meta"><span class="tag risk">Destructive</span> deletes mail older than 7 years</p>
+    </div>
+    <div class="card auto">
+      <h3>5. AI governance <span class="tag auto">Auto-detected</span></h3>
+      <p>Blocks Microsoft 365 Copilot from grounding on Highly Confidential content. Default ON for E5 / Purview Suite tenants; auto-skipped on Business Premium.</p>
+      <p class="meta"><span class="tag opt">-SkipAIControls</span> &middot; <span class="tag off">-BPOnly</span> hard-skip</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="tenant">
+  <h2><span class="num">3</span> Tenant settings applied</h2>
+  <table class="tbl">
+    <thead><tr><th>Setting</th><th>Value</th><th>Mode</th><th>What it does in your tenant</th></tr></thead>
+    <tbody>
+      <tr><td>Unified Audit Log</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
+        <td>Turns on the cross-workload activity log used by every Purview investigation, eDiscovery and DLP report.</td></tr>
+      <tr><td>AIP integration in SharePoint Online</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
+        <td>Lets SPO/OneDrive open, index and search content encrypted by sensitivity labels.</td></tr>
+      <tr><td>Sensitivity label for PDF</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
+        <td>Office can apply (and persist) sensitivity labels when saving as PDF.</td></tr>
+      <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
+        <td>Tenant-wide flag that allows multiple users to edit encrypted Office files at once.</td></tr>
+      <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag opt">-EnableContainerLabels</span></td>
+        <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Off by default.</strong></td></tr>
+      <tr><td>Premium audit (mailbox SearchQueryInitiated)</td><td><code>per-mailbox</code></td><td><span class="tag opt">-EnablePremiumAudit</span></td>
+        <td>Adds the SearchQueryInitiated audit event to nominated mailboxes. Requires E5 / Audit (Premium) licensing.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================= -->
+<section id="labels">
+  <h2><span class="num">4</span> Sensitivity labels created</h2>
+  <p style="margin-top:8px;color:var(--muted)">Eight labels &mdash; three parents and five sub-labels &mdash; ordered from least sensitive
+    (top) to most sensitive (bottom). Encryption is intentionally only applied to the three
+    <em>Highly Confidential</em> sub-labels; Confidential labels carry footer markings only, which is the
+    SMB-friendly profile that minimises breakage with third-party tooling.</p>
+
+  <p style="margin-top:6px;color:var(--muted);font-size:13px">
+    The <strong>Applies to</strong> line under each label reflects the scope the script sets. All
+    labels start at <em>Files &middot; Emails</em>; you can widen any label later in the Purview portal
+    (e.g. add <em>Groups &amp; sites</em> for Teams / SharePoint / M365 Groups) without losing
+    the deployment baseline.
+  </p>
+
+  <div class="labels" aria-label="Sensitivity label hierarchy">
+
+    <div class="label-row">
+      <div class="pri">1</div>
+      <div class="name">Public
+        <small>Business data approved for public consumption. No protection.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span></div>
+    </div>
+
+    <div class="label-row">
+      <div class="pri">2</div>
+      <div class="name">General
+        <small>Internal data, may be shared with external partners. No protection. <strong>Default for new email.</strong></small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span><span class="tag brand">Email default</span></div>
+    </div>
+
+    <div class="label-row">
+      <div class="pri">3</div>
+      <div class="name">Confidential
+        <small>Parent only &mdash; users pick one of the three sub-labels below.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">Parent</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">4</div>
+      <div class="name">Confidential &mdash; All Employees
+        <small>Footer marking "Classified as Confidential". <strong>Default for new documents.</strong></small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span><span class="tag brand">Document default</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">5</div>
+      <div class="name">Confidential &mdash; Specific People
+        <small>Footer only. User chooses recipients at apply time.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">6</div>
+      <div class="name">Confidential &mdash; Internal Exception
+        <small>Footer only. Business-justified internal-only communication.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span></div>
+    </div>
+
+    <div class="label-row">
+      <div class="pri">7</div>
+      <div class="name">Highly Confidential
+        <small>Parent. Adds watermark "HIGHLY CONFIDENTIAL" to all sub-labels.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag on">Watermark</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">8</div>
+      <div class="name">Highly Confidential &mdash; All Employees
+        <small>Encrypted with the tenant-wide rights template. All staff can view, edit and reply.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">9</div>
+      <div class="name">Highly Confidential &mdash; Specific People
+        <small>User-defined encryption. Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag on">Encryption (user-defined)</span><span class="tag on">Footer</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">10</div>
+      <div class="name">Highly Confidential &mdash; Internal Exception
+        <small>Encrypted, all-employees rights. Cannot leave the tenant.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span></div>
+    </div>
+  </div>
+
+  <div class="note info">
+    <span class="ico">i</span>
+    <div>
+      <strong>Rights bundle:</strong> by default encrypted labels grant Microsoft's
+      <em>Reviewer</em> bundle (View, Edit, Save, Reply, Reply All, Forward).
+      Pass <code>-EnableCoAuth</code> to use the full <em>Co-Author</em> bundle (adds
+      Copy, Print, Allow Macros) &mdash; required for Office co-authoring and any third-party
+      tool that reads doc metadata via the Office object model.
+    </div>
+  </div>
+  <div class="note opt">
+    <span class="ico">!</span>
+    <div>
+      <strong>Visual content marking is off by default.</strong> Footer text and the
+      "HIGHLY CONFIDENTIAL" watermark are configured on the labels but only render once
+      you flip <code>EnableContentMarking = $true</code> in <code>PurviewConfig.psd1</code>.
+      This lets you stage the rollout without surprising end-users.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="publish">
+  <h2><span class="num">5</span> Label publishing &mdash; what end users see</h2>
+  <p style="margin-top:8px;color:var(--muted)">All eight labels are <em>created</em> in the tenant.
+    Only the labels below are <em>published</em> to end users via the
+    <code>SMBTool - Default Label Policy</code>. Sub-label names are auto-expanded to include their
+    parent so the Purview hierarchy stays valid.</p>
+  <table class="tbl">
+    <thead><tr><th>Setting</th><th>Value</th><th>What it means for end users</th></tr></thead>
+    <tbody>
+      <tr><td>Published labels</td>
+        <td>Public &middot; General &middot; Confidential / All Employees &middot; Highly Confidential / All Employees</td>
+        <td>The four labels that appear in the Office "Sensitivity" picker for every licensed user.</td></tr>
+      <tr><td>Default for documents</td><td><strong>Confidential / All Employees</strong></td>
+        <td>Every new Word, Excel and PowerPoint document is automatically tagged so it carries the Confidential footer.</td></tr>
+      <tr><td>Default for email</td><td><strong>General</strong></td>
+        <td>Every new Outlook message is pre-tagged General so routine internal mail doesn't trigger DLP.</td></tr>
+      <tr><td>Mandatory labelling <span class="tag on">ON</span></td><td><code>$true</code></td>
+        <td>Office prompts the user to pick a sensitivity label before saving a new document or sending a new email. Closes the untagged-content hole that breaks DLP, auto-classification and Copilot exclusions.</td></tr>
+      <tr><td>Downgrade justification <span class="tag on">ON</span></td><td><code>$true</code></td>
+        <td>Users must give a written reason when downgrading a label (e.g. Confidential &rarr; General).</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================= -->
+<section id="dlp">
+  <h2><span class="num">6</span> DLP policies created</h2>
+  <p style="margin-top:8px;color:var(--muted)">Both policies start in <strong>simulation</strong>
+    (TestWithoutNotifications) with Purview's native "Turn the policy on if it's not edited
+    within fifteen days of simulation" flag set. Purview itself owns the countdown; the
+    toolkit does not auto-enforce.</p>
+
+  <div class="grid">
+    <div class="card on">
+      <h3>Exchange &mdash; block Confidential / HC external <span class="tag on">Default</span></h3>
+      <div class="meta"><span class="tag brand">Simulation</span> <code>SMBTool - DLP - Confidential and HC external (EXO)</code></div>
+      <ul>
+        <li>Matches every Confidential and Highly Confidential sub-label.</li>
+        <li>Blocks the message when any recipient is outside the organisation.</li>
+        <li>Notifies the sender (SiteAdmin, LastModifier, Owner roles).</li>
+        <li>Incident report goes to SiteAdmin.</li>
+      </ul>
+    </div>
+    <div class="card on">
+      <h3>SharePoint + OneDrive &mdash; block external share <span class="tag on">Default</span></h3>
+      <div class="meta"><span class="tag brand">Simulation</span> <code>SMBTool - DLP - Confidential and HC external (SPO+ODB)</code></div>
+      <ul>
+        <li>Same six labels matched.</li>
+        <li>Blocks external sharing only (internal collaboration unaffected).</li>
+        <li>Notifies SiteAdmin, LastModifier, Owner.</li>
+      </ul>
+    </div>
+    <div class="card auto">
+      <h3>Endpoint DLP &mdash; audit copy / print / USB <span class="tag auto">E5 / Purview Suite</span></h3>
+      <div class="meta"><span class="tag brand">Simulation</span> <code>SMBTool - DLP - Endpoint Confidential and HC</code></div>
+      <ul>
+        <li>Audits Copy/Paste, Print, RemovableMedia and NetworkShare actions on managed devices.</li>
+        <li>Flip individual entries to Block / Warn / BlockOverride after validating in DLP Activity Explorer.</li>
+        <li><strong>Rejected automatically</strong> when the script runs with <code>-BPOnly</code>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="retention">
+  <h2><span class="num">7</span> Retention &mdash; opt-in only</h2>
+  <div class="card risk" style="margin-top:14px">
+    <h3>Exchange 7-year retain-then-delete <span class="tag opt">-ApplyRetention</span> <span class="tag risk">Destructive</span></h3>
+    <div class="meta"><code>SMBTool - Exchange 7-year retention</code></div>
+    <p>Retains every mailbox item for 7 years from creation, then permanently deletes it tenant-wide.
+      Off by default &mdash; you <strong>must</strong> pass <code>-ApplyRetention</code>. The 7-year
+      default is wrong for some regulated verticals (law, accounting, healthcare, financial advisors,
+      construction, real estate); confirm against the customer's record-keeping obligations before enabling.</p>
+    <p class="meta">See <code>docs/Retention-Default-Risk.md</code> for the decision matrix.</p>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="ai">
+  <h2><span class="num">8</span> AI governance &mdash; auto-detected by licence</h2>
+  <div class="card auto" style="margin-top:14px">
+    <h3>Block Microsoft 365 Copilot from Highly Confidential content <span class="tag auto">Auto-detected</span></h3>
+    <div class="meta"><code>SMBTool - AI - Block Copilot for Highly Confidential</code>
+      &middot; aligns to <span class="tag brand">AI_054</span></div>
+    <p>Prevents Microsoft 365 Copilot (paid &amp; free Copilot Chat) from grounding, summarising
+      or returning search results from any document or email labelled Highly Confidential.</p>
+    <ul>
+      <li><strong>On automatically</strong> when the tenant has Microsoft 365 E5 or a Purview Suite SKU
+        (detected via Graph <code>/subscribedSkus</code>).</li>
+      <li><strong>Skipped automatically</strong> on Business Premium tenants (<code>-BPOnly</code>),
+        because the Copilot DLP location is not licensed there.</li>
+      <li>Opt out explicitly with <code>-SkipAIControls</code> on any tenant.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<section id="safety">
+  <h2><span class="num">9</span> Safety guarantees &mdash; how to re-run without breaking the tenant</h2>
+  <div class="grid">
+    <div class="card on">
+      <h3>Idempotent <span class="tag on">Re-runnable</span></h3>
+      <p>The script can be re-run any number of times. Existing labels, policies and rules created by
+        the toolkit are updated in place, not duplicated.</p>
+    </div>
+    <div class="card on">
+      <h3>Ownership marker <span class="tag on">Tagged</span></h3>
+      <p>Every object the toolkit creates carries <code>[Managed by SMBTool Purview Toolkit]</code> in
+        its description. Untagged objects are left alone unless you pass <code>-AdoptExisting</code>.</p>
+    </div>
+    <div class="card auto">
+      <h3>Tenant-identity guard <span class="tag auto">Pre-flight</span></h3>
+      <p>After sign-in the script checks the connected tenant's verified domains against the expected
+        domain (from <code>-DelegatedOrganization</code> or your admin UPN suffix). On mismatch the
+        script aborts <em>before</em> any write.</p>
+    </div>
+    <div class="card opt">
+      <h3>Simulation mode <span class="tag opt">DLP only</span></h3>
+      <p>DLP policies are created in TestWithoutNotifications by default. Validate in DLP Activity
+        Explorer first, then let Purview's 15-day flag flip them to enforce &mdash; or set
+        <code>DlpStartInSimulation = $false</code> in the config to enforce immediately.</p>
+    </div>
+    <div class="card off">
+      <h3>HTML &amp; JSON report <span class="tag off">Every run</span></h3>
+      <p>Each run writes <code>Deploy-PurviewBestPractice-Report-&lt;timestamp&gt;.html</code> and a
+        machine-readable <code>.json</code> sidecar next to the script. Forward the HTML to the
+        customer / project manager as evidence.</p>
+    </div>
+    <div class="card off">
+      <h3>Secrets stripped <span class="tag off">Always</span></h3>
+      <p>The report HTML-encodes every value and strips any parameter whose name matches
+        <em>password / token / secret / credential / key</em>, so logs are safe to email.</p>
+    </div>
+  </div>
+
+  <div class="note info" style="margin-top:18px">
+    <span class="ico">i</span>
+    <div>
+      Label and policy changes can take <strong>up to 24 hours</strong> to fully propagate across
+      Microsoft 365 workloads. Always pilot in a test tenant before production rollout.
+    </div>
+  </div>
+</section>
+
+<footer class="page">
+  <div>Microsoft Purview Best Practice Toolkit &middot; overview page</div>
+  <div>Source of truth: <code>Products/Purview/Config/PurviewConfig.psd1</code></div>
+</footer>
+
+</div>
+</body>
+</html>
