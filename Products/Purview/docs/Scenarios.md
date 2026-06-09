@@ -55,13 +55,13 @@ labels can be applied but won't be enforced or visible everywhere.
 | **SharePoint AIP integration** | Sensitivity labels apply at the file level inside SharePoint and OneDrive (search, eDiscovery, DLP all see the label) | ✅ on |
 | **Sensitivity labels for PDF** | New PDFs created or saved in SharePoint / OneDrive carry the parent doc's label | ✅ on |
 | **Label co-authoring** | Multiple users can edit a labelled document at the same time in Office / Office Web | ✅ on |
-| **Container labels** *(opt-in)* | Lets labels apply to Microsoft 365 Groups, Teams, and SharePoint sites (`Group.Unified` `EnableMIPLabels=True`) | Auto-on with E5 / Purview Suite. Off otherwise. |
+| **Container labels** | Lets labels apply to Microsoft 365 Groups, Teams, and SharePoint sites (`Group.Unified` `EnableMIPLabels=True`) | Auto-on with Business Premium / E5 / Purview Suite (BP includes Entra ID P1+, which is the AAD-side requirement). Opt out with `-NoLicenseAutoDetect`. |
 | **Premium audit** *(opt-in)* | Adds the rich `SearchQueryInitiated` event for the named mailbox(es); enables 1-year audit retention | Off — pass `-EnablePremiumAudit -PremiumAuditMailbox` |
 
-> **Licensing note.** The first four are **Business Premium**. Container
-> labels and premium audit require **E5 / Purview Suite**. If the script
-> detects E5 SKUs on the tenant it auto-enables container labels (skip
-> with `-NoLicenseAutoDetect` or `-BPOnly`).
+> **Licensing note.** All four are **Business Premium**. Container labels
+> are also auto-enabled on Business Premium (BP includes Entra ID P1+,
+> the AAD-side requirement) — premium audit still requires **E5 / Purview
+> Suite**. Skip auto-enable with `-NoLicenseAutoDetect`.
 
 ---
 
@@ -252,7 +252,7 @@ automatically. Use `-BPOnly` to hard-block any E5-only feature, or
 | DLP — SharePoint + OneDrive | ✅ | ✅ | ✅ |
 | Retention (Exchange) | ✅ | ✅ | ✅ |
 | Standard audit log (90-day) | ✅ | ✅ | ✅ |
-| **Container labels** (Teams / M365 Groups / SPO sites) | ❌ blocked by `-BPOnly` | ✅ auto-on | ✅ |
+| **Container labels** (Teams / M365 Groups / SPO sites) | ✅ auto-on (BP has AAD P1+); opt out via `-NoLicenseAutoDetect` | ✅ auto-on | ✅ |
 | **Premium audit** (1-yr retention, `SearchQueryInitiated`) | ❌ | ✅ via `-EnablePremiumAudit` | ✅ |
 | **Endpoint DLP** (devices) | ❌ blocked by `-BPOnly` | ✅ created in simulation | ✅ |
 | **Copilot DLP** (block Copilot for HC) | ❌ blocked by `-BPOnly` | ✅ default ON (opt-out via `-SkipAIControls`) | ✅ |

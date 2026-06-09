@@ -425,7 +425,7 @@ $banner = @"
     [$tickAi] AI governance      (Block Copilot grounding on Highly Confidential — default on; opt out: -SkipAIControls; auto-skipped on Business Premium)
 
   Optional features:
-    [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = auto-enable on M365 E5 / Purview Suite]
+    [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = auto-enable on M365 E5 / Purview Suite / Business Premium]
     [$tickPremium] Premium audit    (SearchQueryInitiated)
     [$tickAdopt] Adopt existing   (overwrite non-toolkit objects)
     [$tickCoAuth] Co-Author rights (Copy/Print/Allow Macros) on encrypted labels — default is Reviewer
@@ -598,8 +598,20 @@ if ($wantGraphForAutoDetect) {
             Write-Host "  (To opt out, re-run with -NoLicenseAutoDetect or -BPOnly.)" -ForegroundColor DarkGray
         }
         'BusinessPremium' {
-            Write-Host "  Detected: Microsoft 365 Business Premium." -ForegroundColor DarkGray
-            Write-Host "  Container labels (E5 / Purview Suite feature) not auto-enabled." -ForegroundColor DarkGray
+            Write-Host ("  Detected: Microsoft 365 Business Premium (SKU: {0})." -f ($tier.PartNumbers -join ', ')) -ForegroundColor Green
+            # BP includes Entra ID P1+, which is the AAD-side requirement for
+            # Group.Unified.EnableMIPLabels (container labels on Teams / M365
+            # Groups / SharePoint sites). Microsoft markets container labels
+            # as an E5 / Purview Suite feature but the tenant switch itself
+            # works on BP — flip it on automatically so partners don't ship
+            # half-configured BP tenants. See README:79 ("E5 / Purview Suite
+            # — also AAD P1+") and Skills/Purview/Setup-TenantSettings.skill.md
+            # for the rationale. To opt out, pass -NoLicenseAutoDetect.
+            if (-not $EnableContainerLabels) {
+                $EnableContainerLabels = $true
+                Write-Host "  Auto-enabling: Container labels (Group.Unified EnableMIPLabels)." -ForegroundColor Green
+                Write-Host "  Rationale: BP includes Entra ID P1+, which is the AAD-side requirement for container labels." -ForegroundColor DarkGray
+            }
             if (-not $BPOnly) {
                 $BPOnly = $true
                 Write-Host "  Auto-enabling -BPOnly: E5/Purview-Suite-only DLP workloads (Endpoint, MCAS, OnPrem, PowerBI) will be SKIPPED with a warning, not attempted." -ForegroundColor Yellow

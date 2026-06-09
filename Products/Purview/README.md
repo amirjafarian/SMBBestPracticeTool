@@ -76,7 +76,7 @@ baseline. Some optional features require a higher SKU:
 | DLP for SharePoint + OneDrive                             | Business Premium                      | Always on                              |
 | Retention policies (Exchange)                             | Business Premium                      | Always on                              |
 | Unified audit log (standard, 90-day retention)            | Business Premium                      | Always on                              |
-| Container labels (Group.Unified `EnableMIPLabels`)        | E5 / Purview Suite (also AAD P1+)     | Opt-in via `-EnableContainerLabels`    |
+| Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Auto-on on Business Premium / E5 / Purview Suite (opt out with `-NoLicenseAutoDetect`); switch is `-EnableContainerLabels` |
 | Premium Audit (1-year retention, `SearchQueryInitiated`)  | E5 / Audit (Premium) add-on           | Opt-in via `-EnablePremiumAudit`       |
 | Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
 | DLP for Defender for Cloud Apps / on-prem / Power BI      | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |

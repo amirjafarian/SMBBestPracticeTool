@@ -447,7 +447,12 @@ if ($EnableContainerLabels) {
         }
     }
 } else {
+    # Surface this in the run log too — earlier versions only printed to host,
+    # so when container labels silently went missing from a BP run (e.g. after
+    # a regression in the license auto-detect) the HTML/JSON report had no
+    # evidence the step was even considered. Now every run records the skip.
     Write-Host "[5/5] Container labels: skipped (-EnableContainerLabels not set)." -ForegroundColor DarkGray
+    Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Group.Unified EnableMIPLabels' -Target 'AAD directory setting' -Status 'Skipped' -Detail '-EnableContainerLabels not set; container labels for Teams / M365 Groups / SharePoint sites not enabled. Pass -EnableContainerLabels explicitly or run on an E5 / Purview Suite / Business Premium tenant to auto-enable.'
 }
 
 # ---------------------------------------------------------------------------
