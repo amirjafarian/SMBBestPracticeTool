@@ -65,11 +65,12 @@
     # access is the main vector by which third-party apps reading doc
     # metadata break under encryption.
     #
-    # To enable the full Co-Author bundle (adds Copy, Print, Allow Macros)
-    # at deploy time, pass -EnableCoAuth to Setup-SensitivityLabels.ps1 or
-    # Deploy-PurviewBestPractice.ps1. The script then uses
-    # `EncryptionRightsDefinitionsCoAuth` instead of
-    # `EncryptionRightsDefinitions`.
+    # If you need a wider rights bundle (e.g. Copy, Print, Allow Macros for
+    # third-party tooling), edit `EncryptionRightsDefinitions` below
+    # directly — typically by appending `,EXTRACT,PRINT,OBJMODEL` to the
+    # `AuthenticatedUsers:` rights string. Validate in a pilot tenant before
+    # rolling out, since OBJMODEL access affects every third-party app that
+    # reads Office document metadata.
     #
     # Highly Confidential \ Specific People uses USER-DEFINED encryption
     # (the user picks who gets access at apply time). Outlook behaviour is
@@ -178,23 +179,22 @@
         }
     )
 
-    # ----- Encryption rights bundles -----
-    # Two pre-defined rights strings. The script picks one based on whether
-    # -EnableCoAuth is passed. Both grant rights to AuthenticatedUsers, which
+    # ----- Encryption rights bundle -----
+    # Microsoft's "Reviewer" bundle: View, View Rights, Edit Content, Save,
+    # Reply, Reply All, Forward. Granted to AuthenticatedUsers, which
     # includes B2B guests, social/MSA accounts, and OTP users.
     #
-    # DEFAULT — Microsoft's "Reviewer" bundle:
-    #   View, View Rights, Edit Content, Save, Reply, Reply All, Forward.
-    #   Co-authoring (auto-save + simultaneous editing) and macro / object-
-    #   model access are NOT granted, which is the safe default when third-
-    #   party apps consume Office documents in your tenant.
-    EncryptionRightsDefinitions = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
+    # Co-authoring (auto-save + simultaneous editing) and macro / object-
+    # model access are NOT granted, which is the safe default when third-
+    # party apps consume Office documents in your tenant.
     #
-    # WITH -EnableCoAuth — Microsoft's "Co-Author" bundle:
-    #   adds Copy (EXTRACT), Print, Allow Macros (OBJMODEL). Required for
-    #   Office co-authoring and any third-party tooling that uses the Office
-    #   object model (e.g. some DLP scanners, custom macros).
-    EncryptionRightsDefinitionsCoAuth = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
+    # If you need a wider bundle (the Microsoft "Co-Author" set adds Copy
+    # (EXTRACT), Print, Allow Macros (OBJMODEL)), edit the string below
+    # directly. The "Co-Author" equivalent is:
+    #   'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
+    # OBJMODEL is the right that most often breaks third-party apps reading
+    # doc metadata, so validate in a pilot tenant before promoting.
+    EncryptionRightsDefinitions = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
 
     EncryptionContentExpiredOnDateInDaysOrNever = 'Never'
     EncryptionOfflineAccessDays = 30
@@ -441,6 +441,18 @@
         EnableUnifiedAuditLog        = $true
         EnableSensitivityLabelForPDF = $true
         EnableAIPIntegrationInSPO    = $true
-        EnableLabelCoAuth            = $true
+        # Tenant-wide label co-authoring metadata-format switch
+        # (Set-PolicyConfig -EnableLabelCoauth). DEFAULT-OFF and operator
+        # opt-in via -EnableLabelCoAuthoring on
+        # Deploy-PurviewBestPractice.ps1. This switch is ONE-WAY: once
+        # enabled, label metadata moves out of custom properties; disabling
+        # it later loses labels on unencrypted Office files. Any app,
+        # service, scanner or script reading doc metadata from the old
+        # location (AIP scanner < v3.0, OneDrive sync < 19.002, MIP SDK
+        # < 1.7, custom DLP scanners, custom Exchange mail-flow rules,
+        # etc.) will break. The toolkit refuses to flip this on partner
+        # tenants by default to avoid taking responsibility for that risk.
+        # Ref: https://learn.microsoft.com/purview/sensitivity-labels-coauthoring
+        EnableLabelCoAuth            = $false
     }
 }

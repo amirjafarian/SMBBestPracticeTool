@@ -26,11 +26,14 @@
     Confidential breaks too many third-party integrations and external
     collaboration scenarios for typical SMB customers).
 
-    The default rights bundle is "Reviewer" (View, Edit Content, Save,
-    Reply/Reply-All/Forward). Pass -EnableCoAuth to use the full
-    "Co-Author" bundle (adds Copy, Print, Allow Macros) — required if you
-    want Office co-authoring (auto-save + simultaneous editing) or if
-    third-party tooling reads doc metadata via the Office object model.
+    The default rights bundle is Microsoft's "Reviewer" set (View, Edit
+    Content, Save, Reply/Reply-All/Forward). If you need a wider bundle
+    (e.g. the "Co-Author" set adding Copy, Print, Allow Macros for Office
+    co-authoring or third-party tools that read doc metadata via the
+    Office object model), edit `EncryptionRightsDefinitions` in
+    PurviewConfig.psd1 directly. Validate in a pilot tenant before
+    promoting — OBJMODEL access is the right that most often breaks
+    third-party integrations.
 
     The label policy publishes all 8 labels with separate defaults for
     documents and email:
@@ -57,14 +60,6 @@
     Update labels and policies that already exist but were not created by this
     toolkit. Use only after auditing the existing configuration.
 
-.PARAMETER EnableCoAuth
-    Use Microsoft's full "Co-Author" rights bundle (View, View Rights, Edit
-    Content, Save, Copy, Print, Reply, Reply All, Forward, Allow Macros)
-    instead of the default "Reviewer" bundle. Required for Office
-    co-authoring (auto-save + simultaneous editing) and for third-party
-    tooling that uses the Office object model. Off by default to avoid
-    breaking integrations that read doc metadata.
-
 .NOTES
     Label and policy changes can take up to 24 hours to fully propagate to
     all users and clients.
@@ -75,10 +70,7 @@ param(
     [hashtable] $Config,
 
     [Parameter()]
-    [switch] $AdoptExisting,
-
-    [Parameter()]
-    [switch] $EnableCoAuth
+    [switch] $AdoptExisting
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,17 +100,14 @@ function Format-IPPSError {
 }
 
 $tag = $Config.ManagedByTag
-# Pick the rights bundle once, up-front. The "Co-Author" bundle adds Copy
-# (EXTRACT), Print (PRINT), and Allow Macros (OBJMODEL) to the default
-# "Reviewer" set; OBJMODEL is the right that breaks third-party apps which
-# read doc metadata via the Office object model, so we keep it off unless
-# the operator explicitly opts in via -EnableCoAuth.
-$rights = if ($EnableCoAuth -and $Config.EncryptionRightsDefinitionsCoAuth) {
-    $Config.EncryptionRightsDefinitionsCoAuth
-} else {
-    $Config.EncryptionRightsDefinitions
-}
-$rightsBundleName = if ($EnableCoAuth) { 'Co-Author' } else { 'Reviewer' }
+# Encryption rights bundle. Defined once in PurviewConfig.psd1 as
+# `EncryptionRightsDefinitions`. Default is Microsoft's "Reviewer" set
+# (View/Edit/Save/Reply/ReplyAll/Forward). Partners who need a wider
+# bundle (e.g. Copy, Print, OBJMODEL for third-party integrations) edit
+# the config string directly. OBJMODEL is the right that most often
+# breaks third-party apps reading Office doc metadata, so the default
+# is conservative.
+$rights = $Config.EncryptionRightsDefinitions
 $offlineDays = $Config.EncryptionOfflineAccessDays
 
 # Cache the full label set once so we can match by DisplayName too. The IPPS

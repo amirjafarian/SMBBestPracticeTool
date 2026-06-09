@@ -33,7 +33,7 @@ expanding when **E5 / Purview Suite** licensing is present. It covers
 
 | # | Scenario | Default behaviour | Customer impact |
 |---|----------|-------------------|-----------------|
-| 1 | **Foundational tenant settings** | Enables audit log, label co-authoring, SharePoint label integration, PDF labels | Invisible to end users |
+| 1 | **Foundational tenant settings** | Enables audit log, SharePoint label integration, PDF labels | Invisible to end users |
 | 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults; publishes 4; sets `General` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
 | 3 | **Data Loss Prevention (DLP)** | Blocks external sharing of Confidential and Highly Confidential content from Exchange and SharePoint/OneDrive (in **simulation** mode by default) | Telemetry only until the policy is promoted out of simulation |
 | 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 7 years, then deletes | Long-tail effect — mail older than 7 years starts to be removed |
@@ -54,7 +54,7 @@ labels can be applied but won't be enforced or visible everywhere.
 | **Unified Audit Log** | Every Purview / DLP / label action shows up in audit search and SIEM exports | ✅ on |
 | **SharePoint AIP integration** | Sensitivity labels apply at the file level inside SharePoint and OneDrive (search, eDiscovery, DLP all see the label) | ✅ on |
 | **Sensitivity labels for PDF** | New PDFs created or saved in SharePoint / OneDrive carry the parent doc's label | ✅ on |
-| **Label co-authoring** | Multiple users can edit a labelled document at the same time in Office / Office Web | ✅ on |
+| **Label co-authoring** | Tenant-wide switch that moves label metadata to the new embedded location so multiple users can edit a labelled / encrypted document at the same time in Office / Office Web. **One-way change** — disabling it later loses labels on unencrypted Office files; breaks third-party apps that read the old metadata location | Opt-in via `-EnableLabelCoAuthoring` |
 | **Container labels** | Lets labels apply to Microsoft 365 Groups, Teams, and SharePoint sites (`Group.Unified` `EnableMIPLabels=True`) | Auto-on with Business Premium / E5 / Purview Suite (BP includes Entra ID P1+, which is the AAD-side requirement). Opt out with `-NoLicenseAutoDetect`. |
 | **Premium audit** *(opt-in)* | Adds the rich `SearchQueryInitiated` event for the named mailbox(es); enables 1-year audit retention | Off — pass `-EnablePremiumAudit -PremiumAuditMailbox` |
 
@@ -106,12 +106,20 @@ labels are therefore **not internal-only by default**.
 | Switch | Rights bundle | Office co-authoring | Programmatic access |
 |---|---|---|---|
 | *(default)* | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
-| `-EnableCoAuth` | Microsoft "Co-Author" — adds Copy, Print, Allow Macros | ✅ | ✅ |
+| *(edit config)* | Microsoft "Co-Author" — adds Copy, Print, Allow Macros | ✅ | ✅ |
 
-Co-Author is required for Office auto-save + simultaneous editing on
-encrypted documents and for any third-party tool that reads doc metadata
-through the Office object model. It is **off by default** because partners
-don't know up-front which third-party integrations a customer relies on.
+The default "Reviewer" bundle is conservative because OBJMODEL access is
+the right that most often breaks third-party apps reading Office doc
+metadata. To grant the wider "Co-Author" bundle, edit
+`EncryptionRightsDefinitions` in `PurviewConfig.psd1` directly (replace
+the rights string with the Co-Author equivalent shown above) and
+validate in a pilot tenant before rolling out.
+
+Note: enabling the per-label "Co-Author" *rights bundle* is independent
+of the tenant-wide *label co-authoring switch* (`-EnableLabelCoAuthoring`)
+which controls where Office stores label metadata. Office auto-save +
+simultaneous editing on encrypted documents requires both: the per-label
+rights bundle AND the tenant-wide switch.
 
 ### Visual marking (footers / watermarks)
 
@@ -335,7 +343,7 @@ For the long-form Microsoft Purview guide, see
 | Customer has E5 + wants container labels | *(auto-enabled — no flag needed)* |
 | Update labels / DLP that already exist (not toolkit-created) | `-AdoptExisting` |
 | Re-deploy only DLP after fixing config | `-SkipTenantSettings -SkipLabels` (retention is opt-in already) |
-| Office co-authoring on encrypted labels | `-EnableCoAuth` |
+| Office co-authoring on encrypted labels (tenant-wide, one-way) | `-EnableLabelCoAuthoring` |
 | Roll back everything | Run [`Tests/Invoke-PurviewCleanup.ps1`](../../../Tests/Invoke-PurviewCleanup.ps1) |
 
 ---

@@ -238,7 +238,7 @@
   <div class="grid">
     <div class="card on">
       <h3>1. Tenant settings <span class="tag on">Default</span></h3>
-      <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels, label co-authoring.</p>
+      <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels.</p>
       <p class="meta"><span class="tag opt">-EnableContainerLabels</span> <span class="tag opt">-EnablePremiumAudit</span></p>
     </div>
     <div class="card on">
@@ -276,8 +276,8 @@
         <td>Lets SPO/OneDrive open, index and search content encrypted by sensitivity labels.</td></tr>
       <tr><td>Sensitivity label for PDF</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
         <td>Office can apply (and persist) sensitivity labels when saving as PDF.</td></tr>
-      <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
-        <td>Tenant-wide flag that allows multiple users to edit encrypted Office files at once.</td></tr>
+      <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag opt">-EnableLabelCoAuthoring</span></td>
+        <td>Tenant-wide switch that lets multiple users edit encrypted Office files at once. <strong>One-way change</strong> &mdash; disabling it later loses labels on unencrypted Office files, breaks third-party tools that read labels from the old metadata location (AIP scanner &lt; v3.0, OneDrive sync &lt; 19.002, MIP SDK &lt; 1.7, custom DLP scanners, custom Exchange mail-flow rules). <strong>Off by default.</strong></td></tr>
       <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag opt">-EnableContainerLabels</span></td>
         <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Off by default.</strong></td></tr>
       <tr><td>Premium audit (mailbox SearchQueryInitiated)</td><td><code>per-mailbox</code></td><td><span class="tag opt">-EnablePremiumAudit</span></td>
@@ -443,9 +443,10 @@
     <div>
       <strong>Rights bundle:</strong> by default encrypted labels grant Microsoft's
       <em>Reviewer</em> bundle (View, Edit, Save, Reply, Reply All, Forward).
-      Pass <code>-EnableCoAuth</code> to use the full <em>Co-Author</em> bundle (adds
-      Copy, Print, Allow Macros) &mdash; required for Office co-authoring and any third-party
-      tool that reads doc metadata via the Office object model.
+      To use the full <em>Co-Author</em> bundle (adds Copy, Print, Allow Macros &mdash;
+      required for any third-party tool that reads doc metadata via the Office
+      object model), edit <code>EncryptionRightsDefinitions</code> in
+      <code>PurviewConfig.psd1</code> directly and validate in a pilot tenant.
     </div>
   </div>
   <div class="note opt">

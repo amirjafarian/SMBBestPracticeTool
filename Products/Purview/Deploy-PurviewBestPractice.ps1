@@ -126,14 +126,20 @@
     Update labels, policies, and rules that already exist but were not created
     by this toolkit. Use only after auditing existing configuration.
 
-.PARAMETER EnableCoAuth
-    Forwarded to Setup-SensitivityLabels. Use Microsoft's full "Co-Author"
-    rights bundle (View, View Rights, Edit Content, Save, Copy, Print, Reply,
-    Reply All, Forward, Allow Macros) instead of the default "Reviewer"
-    bundle on encrypted sub-labels. Required for Office co-authoring (auto-
-    save + simultaneous editing) and for third-party tooling that uses the
-    Office object model. Off by default to avoid breaking integrations that
-    read doc metadata.
+.PARAMETER EnableLabelCoAuthoring
+    OPT-IN tenant-wide switch. Calls `Set-PolicyConfig -EnableLabelCoauth:$true`
+    in Setup-TenantSettings step [4/5]. THIS IS A ONE-WAY CHANGE: once
+    enabled, sensitivity-label metadata moves out of the old custom-properties
+    location to the new embedded location. Disabling it later (PowerShell
+    only — the Purview portal does NOT support disabling) REMOVES the new-
+    location metadata; unencrypted Word/Excel/PowerPoint files lose their
+    labels entirely. Any third-party app, scanner or script that reads
+    labels from the old location will break: AIP scanner < v3.0, OneDrive
+    sync < 19.002, MIP SDK < 1.7, custom DLP scanners, custom Exchange
+    mail-flow rules, etc. Off by default because partners cannot
+    enumerate every third-party integration on a customer tenant. Confirm
+    no old-location consumers exist before passing this switch.
+    Ref: https://learn.microsoft.com/purview/sensitivity-labels-coauthoring
 
 .PARAMETER NonInteractive
     Skip the preflight confirmation prompt (e.g. for CI/automation runs).
@@ -246,7 +252,7 @@ param(
     [switch] $AdoptExisting,
 
     [Parameter()]
-    [switch] $EnableCoAuth,
+    [switch] $EnableLabelCoAuthoring,
 
     [Parameter()]
     [switch] $NonInteractive,
@@ -339,6 +345,20 @@ if (-not (Test-Path $ConfigPath)) {
 }
 $config = Import-PowerShellDataFile -Path $ConfigPath
 
+# Operator opt-in for the tenant-wide label co-authoring metadata-format
+# switch (Set-PolicyConfig -EnableLabelCoauth). The config default is
+# $false because this is a ONE-WAY change that can break third-party apps
+# reading labels from the old custom-properties location (AIP scanner
+# < v3.0, OneDrive sync < 19.002, MIP SDK < 1.7, etc.). The operator
+# must pass -EnableLabelCoAuthoring explicitly after confirming no old-
+# location consumers exist on the target tenant. See PurviewConfig.psd1
+# comment, the .PARAMETER block above, and
+# https://learn.microsoft.com/purview/sensitivity-labels-coauthoring.
+if ($EnableLabelCoAuthoring) {
+    if (-not $config.TenantSettings) { $config.TenantSettings = @{} }
+    $config.TenantSettings.EnableLabelCoAuth = $true
+}
+
 $moduleRoot = Join-Path $scriptRoot 'Modules'
 $connectScript      = Join-Path $moduleRoot 'Connect-PurviewServices.ps1'
 $tenantScript       = Join-Path $moduleRoot 'Setup-TenantSettings.ps1'
@@ -402,7 +422,7 @@ $tickContainer  = if ($BPOnly -or $NoLicenseAutoDetect -or $SkipTenantSettings) 
                   else                              { '?' }
 $tickPremium    = if ($EnablePremiumAudit)      { 'X' } else { ' ' }
 $tickAdopt      = if ($AdoptExisting)           { 'X' } else { ' ' }
-$tickCoAuth     = if ($EnableCoAuth)            { 'X' } else { ' ' }
+$tickLabelCoAuth = if ($EnableLabelCoAuthoring) { 'X' } else { ' ' }
 $bannerMode     = if ($WhatIfPreference) { 'WHAT-IF (preview only — no changes)' } else { 'APPLY (changes will be made)' }
 $bannerTier     = if ($BPOnly) { 'Business Premium ONLY (E5 features blocked)' } else { 'No license tier restriction' }
 
@@ -418,7 +438,7 @@ $banner = @"
   Config file          : $ConfigPath
 
   Tasks to run:
-    [$tickTenant] Tenant settings    (audit, SPO/AIP, co-auth, PDF)
+    [$tickTenant] Tenant settings    (audit, SPO/AIP, PDF)
     [$tickLabels] Sensitivity labels (3 parents + 5 sub-labels, publish)
     [$tickDlp] DLP policies       (Exchange + SPO/OneDrive)
     [$tickRetention] Retention          (Exchange 7 years — opt-in via -ApplyRetention)
@@ -428,7 +448,7 @@ $banner = @"
     [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = auto-enable on M365 E5 / Purview Suite / Business Premium]
     [$tickPremium] Premium audit    (SearchQueryInitiated)
     [$tickAdopt] Adopt existing   (overwrite non-toolkit objects)
-    [$tickCoAuth] Co-Author rights (Copy/Print/Allow Macros) on encrypted labels — default is Reviewer
+    [$tickLabelCoAuth] Label co-auth tenant switch (ONE-WAY — see -EnableLabelCoAuthoring help)
 
   Legend: 'X' = task is in scope and will run.  ' ' = task is skipped (by user opt-out or BP auto-skip).
           '?' = task pending license auto-detect — runs if tenant has E5 / Purview Suite, otherwise auto-skips.
@@ -867,7 +887,6 @@ if (-not $SkipLabels) {
     try {
         $taskArgs = @{ Config = $config }
         if ($AdoptExisting) { $taskArgs['AdoptExisting'] = $true }
-        if ($EnableCoAuth)  { $taskArgs['EnableCoAuth']  = $true }
         & $labelsScript @taskArgs
         $summary['Sensitivity labels'] = 'OK'
         $_taskSw.Stop()

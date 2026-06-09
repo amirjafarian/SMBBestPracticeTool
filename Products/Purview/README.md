@@ -46,8 +46,8 @@ Security Best Practice Deployment" guide for Business Premium.
 
 | # | Task                | Default state                                                                                                        |
 |---|---------------------|----------------------------------------------------------------------------------------------------------------------|
-| 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling, label co-authoring                             |
-| 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Co-Author rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
+| 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling                             |
+| 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Reviewer rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
 | 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
 | 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
@@ -317,17 +317,22 @@ encryption with these usage rights to the special identity
 `AuthenticatedUsers`:
 
 ```
-VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, PRINT, EXTRACT, REPLY, REPLYALL,
-FORWARD, OBJMODEL
+VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
 ```
 
-This bundle equates to **Co-Author** in the Microsoft documentation. The
-identity `AuthenticatedUsers` includes signed-in internal users plus B2B
-guests, social/MSA accounts, and one-time-passcode (OTP) users — so it is
-**not an internal-only scope**.
+This bundle equates to **Reviewer** in the Microsoft documentation. Copy
+(EXTRACT), Print, and Allow Macros (OBJMODEL) are **not** granted by
+default because OBJMODEL access is the right that most often breaks
+third-party apps reading Office doc metadata. To grant a wider bundle
+(Microsoft's "Co-Author" set), edit `EncryptionRightsDefinitions` in
+`PurviewConfig.psd1` directly and validate in a pilot tenant.
+
+The identity `AuthenticatedUsers` includes signed-in internal users plus
+B2B guests, social/MSA accounts, and one-time-passcode (OTP) users — so it
+is **not an internal-only scope**.
 
 If you need an internal-employees-only scope, replace `AuthenticatedUsers` in
-`EncryptionRightsDefinitions` / `EncryptionRightsDefinitionsCoAuth` with a
+`EncryptionRightsDefinitions` with a
 Microsoft 365 group whose dynamic membership is scoped to
 `user.userType -eq "Member"`. Validate in a pilot tenant before rolling out.
 

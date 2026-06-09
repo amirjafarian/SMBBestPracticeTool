@@ -40,6 +40,7 @@ customer; you can shorten subsequent ones with experience.
 * `-ApplyRetention` — yes/no (**opt-in** — only enable if the customer has consciously chosen a retention duration appropriate for their vertical)
 * `-EnableContainerLabels` — accept the auto-detect default, or override
 * `-EnablePremiumAudit` + which mailbox(es) — yes/no
+* `-EnableLabelCoAuthoring` — yes/no (**opt-in, one-way change** — only enable after confirming the customer has no third-party apps, scanners, scripts or services that read sensitivity-label metadata from the old custom-properties location. AIP scanner < v3.0, OneDrive sync < 19.002, MIP SDK < 1.7, custom DLP scanners and custom Exchange mail-flow rules all break if they read from the old location. Disabling later is PowerShell-only and loses labels on unencrypted Office files. Ref: [`sensitivity-labels-coauthoring`](https://learn.microsoft.com/purview/sensitivity-labels-coauthoring))
 * Retention duration (only relevant if `-ApplyRetention` is enabled) — **stick with default 7 years only if the customer has explicitly agreed** (otherwise edit `Retention.DurationDays` in `PurviewConfig.psd1`)
 * `EnableContentMarking` in `PurviewConfig.psd1` — leave `$false` for the initial deploy; flip to `$true` after the day-30 review
 
