@@ -1104,9 +1104,31 @@ foreach ($lbl in $Config.Labels) {
     $configuredDisplayNamesEarly += $lbl.DisplayName
     if ($lbl.SubLabels) { $configuredDisplayNamesEarly += $lbl.SubLabels.DisplayName }
 }
-$allTopLevel = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not $_.ParentId })
+
+# Refresh the $allLabels cache with LIVE state from Purview BEFORE slot
+# accounting and Phase A. A single fresh snapshot is reused for unmanaged
+# top-level detection AND live sub-label counts so both views agree (and
+# downstream Resolve-ConfigParentLabel / Get-LabelByName see the same data).
+# The initial snapshot at the top of the script was taken before Pass 2
+# created labels (and before any prior Pass 3 run shuffled priorities);
+# reading priorities from a stale cache causes Phase A to skip labels that
+# look "already correct" but aren't, which is how 'Public' gets stranded
+# at the wrong end of the priority list on multi-run tenants.
+$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+$allTopLevel = @($script:allLabels | Where-Object { -not $_.ParentId })
 $unmanagedTopLevel = @($allTopLevel | Where-Object { $configuredDisplayNamesEarly -notcontains $_.DisplayName })
-$unmanagedCount = $unmanagedTopLevel.Count
+
+# Total slot footprint of unmanaged top-level labels = each unmanaged parent
+# PLUS its live direct children. Personal has no children in practice, but
+# counting children defensively handles arbitrary unmanaged hierarchies and
+# keeps configured-label slot accounting correct regardless.
+$unmanagedFootprint = 0
+foreach ($u in $unmanagedTopLevel) {
+    $unmanagedFootprint++
+    if ($u.Guid) {
+        $unmanagedFootprint += @($script:allLabels | Where-Object { $_.ParentId -eq $u.Guid }).Count
+    }
+}
 
 # Build pin-order: 'Personal' FIRST (so it gets pushed LAST in reverse
 # iteration and lands at slot 0), then any other unmanaged labels.
@@ -1116,24 +1138,55 @@ $pinOrder        = @()
 if ($personalLbl.Count -gt 0)    { $pinOrder += $personalLbl[0] }
 if ($otherUnmanaged.Count -gt 0) { $pinOrder += $otherUnmanaged }
 
-# Compute the expected GLOBAL priority for each top-level config label.
-# Slots 0..unmanagedCount-1 are reserved for unmanaged labels (Personal
-# at 0); config labels start at $unmanagedCount.
+# Compute the expected GLOBAL priority for each configured top-level label.
+# Slots 0..unmanagedFootprint-1 are reserved for unmanaged top-level labels
+# and their children (Personal at slot 0); configured labels start at
+# $unmanagedFootprint.
+#
+# Each managed parent's slot footprint is 1 (parent) + LIVE direct sub-label
+# count. Using LIVE count (not config count) is critical when a managed
+# parent has extra "phantom" sub-labels left over from a previous failed
+# run: those extras still occupy slots in the parent's block, so a config-
+# only count under-reserves and downstream parents land at the wrong slot.
+# Use MAX(live, config) so we don't under-reserve when the live snapshot is
+# missing newly-created children due to eventual consistency.
 $expectedParentPriority = @{}
-$cursor = $unmanagedCount
+$cursor = $unmanagedFootprint
 foreach ($lbl in $Config.Labels) {
     $expectedParentPriority[$lbl.DisplayName] = $cursor
     $cursor++
-    if ($lbl.SubLabels) { $cursor += $lbl.SubLabels.Count }
-}
+    $parentObjForCount = Resolve-ConfigParentLabel -LabelDef $lbl
+    $configChildCount = if ($lbl.SubLabels) { $lbl.SubLabels.Count } else { 0 }
+    $liveChildren = @()
+    if ($parentObjForCount -and $parentObjForCount.Guid) {
+        $liveChildren = @($script:allLabels | Where-Object { $_.ParentId -eq $parentObjForCount.Guid })
+    }
+    $effectiveChildCount = if ($liveChildren.Count -gt $configChildCount) { $liveChildren.Count } else { $configChildCount }
+    $cursor += $effectiveChildCount
 
-# Refresh the $allLabels cache with LIVE state from Purview before Phase A.
-# The initial snapshot at the top of the script was taken before Pass 2
-# created labels (and before any prior Pass 3 run shuffled priorities).
-# Reading priorities from a stale cache causes Phase A to skip labels that
-# look "already correct" but aren't, which is how 'Public' gets stranded
-# at the wrong end of the priority list on multi-run tenants.
-$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+    # Identity-based phantom detection: warn about any live sub-label whose
+    # Name AND DisplayName don't match any configured sub-label under this
+    # parent. They occupy slot(s) inside the parent's block but won't be
+    # reordered by Phase B; admin should rename or remove them in Purview UI.
+    if ($parentObjForCount -and $liveChildren.Count -gt 0) {
+        $configChildNames        = @()
+        $configChildDisplayNames = @()
+        if ($lbl.SubLabels) {
+            $configChildNames        = @($lbl.SubLabels | ForEach-Object { $_.Name })
+            $configChildDisplayNames = @($lbl.SubLabels | ForEach-Object { $_.DisplayName })
+        }
+        $extras = @($liveChildren | Where-Object {
+            ($configChildNames -notcontains $_.Name) -and ($configChildDisplayNames -notcontains $_.DisplayName)
+        })
+        if ($extras.Count -gt 0) {
+            $extrasDesc = ($extras | ForEach-Object { "'$($_.DisplayName)' [Name=$($_.Name); Guid=$($_.Guid)]" }) -join ', '
+            Write-Warning ("    Managed parent '{0}' has {1} unmanaged live sub-label(s): {2}. They occupy slot(s) in the parent's block; rename or remove them in Purview Admin if not intentional." -f $lbl.DisplayName, $extras.Count, $extrasDesc)
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Detect-PhantomSubLabel' `
+                -Target $lbl.DisplayName -Status 'Info' `
+                -Detail "Live sub-label count ($($liveChildren.Count)) exceeds configured ($configChildCount). Extras: $extrasDesc"
+        }
+    }
+}
 
 # Pre-check: are config parents already in the right slots AND is Personal at 0?
 # Use Get-LiveLabelByObject (bulk-fetch fallback) so the precheck succeeds even
@@ -1229,9 +1282,11 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
 #
 # Sub-label priorities are GLOBAL (not relative to the parent), but Purview
 # enforces that a sub-label can only move within its parent's contiguous block.
-# Derive the first child slot from the script's expected parent ordering rather
-# than current live child priorities: immediately after Phase A, IPPS can still
-# surface stale child priority values and cause us to target the wrong slot.
+# Derive the first child slot from the LIVE parent priority (refreshed via
+# Get-LiveLabelByObject) and sanity-check against the expected slot so we
+# never target a slot outside the parent's actual live block — which causes
+# InvalidSubLabelPriorityException when Phase A's expected slot calculation
+# is off (e.g. tenant has phantom unmanaged sub-labels under a managed parent).
 foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels -or $lbl.SubLabels.Count -eq 0) { continue }
     $parentMeta = Resolve-ConfigParentLabel -LabelDef $lbl
@@ -1250,7 +1305,26 @@ foreach ($lbl in $Config.Labels) {
         continue
     }
 
-    $firstChildSlot = [int]$expectedParentPriority[$lbl.DisplayName] + 1
+    # Phase B derives child slots from the LIVE parent priority (not from the
+    # statically computed expected) so it stays correct even if the parent
+    # ended up at a slightly different slot than expected (e.g. IPPS eventual
+    # consistency right after Phase A). Sanity-check live vs expected first;
+    # if they disagree after one refresh, defer Phase B for this parent so
+    # the verifier/recovery can fix the parent on a subsequent pass.
+    $expectedParentSlot = [int]$expectedParentPriority[$lbl.DisplayName]
+    if ($parentObj.Priority -ne $expectedParentSlot) {
+        Start-Sleep -Seconds 2
+        $refreshed = Get-LiveLabelByObject -LabelObject $parentMeta
+        if ($refreshed) { $parentObj = $refreshed }
+    }
+    if ($parentObj.Priority -ne $expectedParentSlot) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Phase B sub-label reorder' `
+            -Target $lbl.DisplayName -Status 'Skipped' `
+            -Detail "Parent priority $($parentObj.Priority) does not match expected $expectedParentSlot after refresh; deferring sub-label reorder so verifier can recover parent first."
+        Write-Warning "    Sub-label reorder deferred for '$($lbl.DisplayName)' (parent at slot $($parentObj.Priority), expected $expectedParentSlot)."
+        continue
+    }
+    $firstChildSlot = [int]$parentObj.Priority + 1
 
     # Pre-check: are the sub-labels already in config order?
     $childrenCorrect = $true
