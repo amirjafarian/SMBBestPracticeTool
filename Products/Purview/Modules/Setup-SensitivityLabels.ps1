@@ -429,6 +429,176 @@ function Get-LabelByName {
     return $null
 }
 
+# Resolve a configured parent label to its live Purview object. Prefers the
+# Pass 1 cache ($script:createdParents) because that object came directly from
+# Get-Label -Identity in New-OrUpdate-Label and is authoritative even for
+# Microsoft-default labels (e.g. 'Public', 'Personal') that bulk Get-Label
+# does not always surface reliably. Falls back to the bulk-cache lookup.
+function Resolve-ConfigParentLabel {
+    param([Parameter(Mandatory)] [hashtable] $LabelDef)
+    if ($script:createdParents -and $script:createdParents.ContainsKey($LabelDef.Name)) {
+        $cached = $script:createdParents[$LabelDef.Name]
+        if ($cached) { return $cached }
+    }
+    return Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName
+}
+
+# Return the most stable identity to pass to IPPS cmdlets. The label Guid is
+# immutable and unambiguous; Name can be a GUID-string (MS-default labels) or
+# a human-readable token (user-created labels). Both work with -Identity, but
+# Guid is the safer choice for re-lookups after mutations.
+function Get-StableLabelIdentity {
+    param([Parameter(Mandatory)] $LabelObject)
+    if ($LabelObject.PSObject.Properties.Name -contains 'Guid' -and $LabelObject.Guid) {
+        return [string]$LabelObject.Guid
+    }
+    return [string]$LabelObject.Name
+}
+
+# True when a string is shaped like a canonical GUID. Used to detect labels
+# whose Name property is actually a GUID (Microsoft-default labels), because
+# Set-Label via that GUID-shaped Name is unreliable on some tenants.
+function Test-IsGuidLikeString {
+    param([string] $Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return $Value -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+}
+
+# Resolve a label to its CURRENT live state using a fresh bulk Get-Label (which
+# is more reliable than Get-Label -Identity for Microsoft-default labels on
+# some tenants). Matches by Guid, then Name, then unique top-level DisplayName.
+# Returns $null if no match. Used by both the priority setter and the
+# verification pass so they cannot disagree about a label's current priority.
+function Get-LiveLabelByObject {
+    param([Parameter(Mandatory)] $LabelObject)
+    $bulk = $null
+    try {
+        Invoke-WithTransientRetry -Description "Get-Label (bulk fetch for live resolve)" -Action {
+            $script:_bulkLabelsForResolve = @(Get-Label -ErrorAction Stop | Where-Object { -not (Test-LabelSoftDeleted $_) })
+        }
+        $bulk = $script:_bulkLabelsForResolve
+        Remove-Variable -Name '_bulkLabelsForResolve' -Scope Script -ErrorAction SilentlyContinue
+    } catch {
+        $bulk = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+    }
+    if (-not $bulk) { return $null }
+
+    if ($LabelObject.Guid) {
+        try {
+            if (([guid]$LabelObject.Guid) -ne [guid]::Empty) {
+                $m = $bulk | Where-Object { $_.Guid -eq $LabelObject.Guid } | Select-Object -First 1
+                if ($m) { return $m }
+            }
+        } catch {}
+    }
+    if ($LabelObject.Name) {
+        $m = $bulk | Where-Object { $_.Name -eq [string]$LabelObject.Name } | Select-Object -First 1
+        if ($m) { return $m }
+    }
+    if ($LabelObject.DisplayName) {
+        $cands = @($bulk | Where-Object { $_.DisplayName -eq $LabelObject.DisplayName -and -not $_.ParentId })
+        if ($cands.Count -eq 1) { return $cands[0] }
+    }
+    return $null
+}
+
+# Update label priority and VERIFY the change persisted. Tries multiple Identity
+# forms because IPPS Set-Label can be a silent no-op for Microsoft-default
+# labels when called by Guid (or by Name when the Name is itself the GUID).
+#
+# Identity precedence:
+#   * Microsoft-default-shaped labels (Name == Guid OR Name looks like a GUID):
+#       DisplayName (if unique top-level)  →  Name  →  Guid
+#   * Everything else:
+#       Name  →  DisplayName (if unique top-level)  →  Guid
+#
+# DisplayName is only added as a candidate for TOP-LEVEL labels, and only when
+# bulk Get-Label confirms exactly one top-level label has that DisplayName AND
+# it matches our target Guid/Name. Sub-label DisplayNames are excluded because
+# they can legitimately repeat across different parent labels.
+#
+# Returns a PSObject with: Success, UsedIdentity (Name/DisplayName/Guid),
+# Attempts (string[] diagnostic trail), Live (fresh label object on success).
+function Set-LabelPriorityWithVerify {
+    param(
+        [Parameter(Mandatory)] $LabelObject,
+        [Parameter(Mandatory)] [int]    $TargetPriority,
+        [Parameter(Mandatory)] [string] $DisplayNameForLog,
+        [switch] $IsSubLabel
+    )
+
+    $nameStr    = if ($LabelObject.Name)        { [string]$LabelObject.Name        } else { $null }
+    $displayStr = if ($LabelObject.DisplayName) { [string]$LabelObject.DisplayName } else { $null }
+    $guidStr    = $null
+    if ($LabelObject.Guid) {
+        try { if (([guid]$LabelObject.Guid) -ne [guid]::Empty) { $guidStr = [string]$LabelObject.Guid } } catch {}
+    }
+
+    $nameIsGuidLike = Test-IsGuidLikeString -Value $nameStr
+    $msDefaultLike  = ($nameStr -and $guidStr -and ($nameStr -eq $guidStr)) -or $nameIsGuidLike
+
+    # Confirm DisplayName uniqueness before allowing it as a Set-Label identity.
+    $displayIsSafe = $false
+    if (-not $IsSubLabel -and $displayStr) {
+        $peek = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+        $same = @($peek | Where-Object { $_.DisplayName -eq $displayStr -and -not $_.ParentId })
+        if ($same.Count -eq 1) {
+            $hit = $same[0]
+            if (($guidStr -and ($hit.Guid -eq $LabelObject.Guid)) -or
+                ($nameStr -and ($hit.Name -eq $nameStr))) {
+                $displayIsSafe = $true
+            }
+        }
+    }
+
+    $cands = New-Object System.Collections.Generic.List[object]
+    if ($msDefaultLike) {
+        if ($displayIsSafe) { [void]$cands.Add(@{ Kind='DisplayName'; Value=$displayStr }) }
+        if ($nameStr)       { [void]$cands.Add(@{ Kind='Name';        Value=$nameStr    }) }
+        if ($guidStr -and ($guidStr -ne $nameStr)) {
+                              [void]$cands.Add(@{ Kind='Guid';        Value=$guidStr    }) }
+    } else {
+        if ($nameStr)       { [void]$cands.Add(@{ Kind='Name';        Value=$nameStr    }) }
+        if ($displayIsSafe) { [void]$cands.Add(@{ Kind='DisplayName'; Value=$displayStr }) }
+        if ($guidStr -and ($guidStr -ne $nameStr)) {
+                              [void]$cands.Add(@{ Kind='Guid';        Value=$guidStr    }) }
+    }
+
+    $attempts = New-Object System.Collections.Generic.List[string]
+    foreach ($c in $cands) {
+        try {
+            Invoke-WithTransientRetry -Description ("Set-Label priority=$TargetPriority '$DisplayNameForLog' via $($c.Kind)") -Action {
+                Set-Label -Identity $c.Value -Priority $TargetPriority `
+                    -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            }
+        } catch {
+            $errMsg = Format-IPPSError $_
+            [void]$attempts.Add("[$($c.Kind)='$($c.Value)'] threw: $errMsg")
+            # 'not a valid priority' / 'is not valid' is the IPPS no-op error we
+            # ignore in legacy code; treat as soft failure and try next identity.
+            continue
+        }
+        $live = Get-LiveLabelByObject -LabelObject $LabelObject
+        if ($live -and $live.Priority -eq $TargetPriority) {
+            [void]$attempts.Add("[$($c.Kind)='$($c.Value)'] success: priority=$($live.Priority)")
+            return [pscustomobject]@{
+                Success      = $true
+                UsedIdentity = $c.Kind
+                Attempts     = @($attempts)
+                Live         = $live
+            }
+        }
+        $obs = if ($live) { $live.Priority } else { 'not-found-in-bulk' }
+        [void]$attempts.Add("[$($c.Kind)='$($c.Value)'] no-op: observed priority=$obs after Set-Label.")
+    }
+    return [pscustomobject]@{
+        Success      = $false
+        UsedIdentity = $null
+        Attempts     = @($attempts)
+        Live         = $null
+    }
+}
+
 function Test-Owned {
     param($Object, [string] $Tag)
     if (-not $Object) { return $false }
@@ -746,11 +916,11 @@ if ($Config.LabelPolicy -and $Config.LabelPolicy.Name -and $Config.LabelPolicy.N
 # Pass 1 — create / update parent labels
 # ---------------------------------------------------------------------------
 Write-Host "Creating sensitivity labels..." -ForegroundColor Cyan
-$createdParents = @{}
+$script:createdParents = @{}
 foreach ($lbl in $Config.Labels) {
     Write-Host "  Label: $($lbl.Name)" -ForegroundColor White
     $parent = New-OrUpdate-Label -LabelDef $lbl
-    $createdParents[$lbl.Name] = $parent
+    $script:createdParents[$lbl.Name] = $parent
 }
 
 # ---------------------------------------------------------------------------
@@ -761,7 +931,7 @@ foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels) { continue }
     foreach ($sub in $lbl.SubLabels) {
         Write-Host "  Sub-label: $($lbl.Name)/$($sub.Name)" -ForegroundColor White
-        $parentObj = $createdParents[$lbl.Name]
+        $parentObj = $script:createdParents[$lbl.Name]
         if (-not $parentObj) {
             if ($WhatIfPreference) {
                 Write-Host "    What if: parent '$($lbl.Name)' does not yet exist; would create sub-label '$($sub.Name)' under it." -ForegroundColor DarkYellow
@@ -839,18 +1009,28 @@ foreach ($lbl in $Config.Labels) {
 $script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
 
 # Pre-check: are config parents already in the right slots AND is Personal at 0?
+# Use Get-LiveLabelByObject (bulk-fetch fallback) so the precheck succeeds even
+# for Microsoft-default labels where Get-Label -Identity by Guid returns null.
 $parentsAlreadyCorrect = $true
 foreach ($lbl in $Config.Labels) {
-    $obj = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
-    if (-not $obj) { continue }
-    if ($obj.Priority -ne $expectedParentPriority[$lbl.DisplayName]) {
+    $obj = Resolve-ConfigParentLabel -LabelDef $lbl
+    if (-not $obj) {
+        $parentsAlreadyCorrect = $false
+        break
+    }
+    $live = Get-LiveLabelByObject -LabelObject $obj
+    if (-not $live) {
+        $parentsAlreadyCorrect = $false
+        break
+    }
+    if ($live.Priority -ne $expectedParentPriority[$lbl.DisplayName]) {
         $parentsAlreadyCorrect = $false
         break
     }
 }
 $personalAlreadyAtZero = $true
 if ($personalLbl.Count -gt 0) {
-    $pNow = Get-Label -Identity $personalLbl[0].Name -ErrorAction SilentlyContinue
+    $pNow = Get-LiveLabelByObject -LabelObject $personalLbl[0]
     if ($pNow -and $pNow.Priority -ne 0) { $personalAlreadyAtZero = $false }
 }
 
@@ -858,51 +1038,62 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
     # Phase A — config top-levels: reverse-push to 0. Final config order:
     # Config.Labels[0] at slot 0, Config.Labels[1] at slot 1, ...
     #
-    # CRITICAL: read Priority via a LIVE Get-Label call inside the loop, not
-    # from $allLabels. Each Set-Label below mutates Purview but does NOT
-    # refresh the cache; the next iteration would otherwise compare against
-    # a stale snapshot and incorrectly skip a label whose cached priority
-    # was 0 at script start (the classic "Public stuck at the bottom" bug).
+    # Each Set-Label is verified via a fresh bulk Get-Label and retried with
+    # alternate Identity forms if the priority did not actually change. This
+    # is the fix for the classic "Public stuck at the bottom" bug — IPPS
+    # Set-Label silently no-ops on Microsoft-default labels when called with
+    # a Guid identity, but accepts DisplayName for the same label.
     for ($i = $Config.Labels.Count - 1; $i -ge 0; $i--) {
         $lbl = $Config.Labels[$i]
-        $obj = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
-        if (-not $obj) { continue }
-        $live = Get-Label -Identity $obj.Name -ErrorAction SilentlyContinue
-        if (-not $live) { continue }
-        if ($PSCmdlet.ShouldProcess($obj.Name, "Set priority=0 (top-level reorder)")) {
-            try {
-                Invoke-WithTransientRetry -Description ("Set-Label priority=0 '$($lbl.DisplayName)'") -Action {
-                    Set-Label -Identity $obj.Name -Priority 0 `
-                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-                }
-            } catch {
-                $priorityErr = Format-IPPSError $_
-                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
-                    throw "Label priority reorder failed for '$($lbl.DisplayName)': $priorityErr. Label priority may be in inconsistent state — fix the error and re-run."
-                }
+        $obj = Resolve-ConfigParentLabel -LabelDef $lbl
+        if (-not $obj) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0' `
+                -Target $lbl.DisplayName -Status 'Skipped' `
+                -Detail "Configured label could not be resolved in createdParents cache or via Get-LabelByName. Bulk Get-Label may not be surfacing it (common for Microsoft-default labels)."
+            continue
+        }
+        $identityForShouldProcess = Get-StableLabelIdentity -LabelObject $obj
+        if ($PSCmdlet.ShouldProcess($identityForShouldProcess, "Set priority=0 (top-level reorder)")) {
+            $r = Set-LabelPriorityWithVerify -LabelObject $obj -TargetPriority 0 -DisplayNameForLog $lbl.DisplayName
+            if ($r.Success) {
+                # Refresh cache so later phases / verification see the new state.
+                $script:createdParents[$lbl.Name] = $r.Live
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0' `
+                    -Target $lbl.DisplayName -Status 'Succeeded' `
+                    -Detail ("Used identity '{0}'. Attempts: {1}" -f $r.UsedIdentity, ($r.Attempts -join ' | '))
+            } else {
+                $detail = "All identity forms failed to update priority. Attempts: " + ($r.Attempts -join ' | ')
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0' `
+                    -Target $lbl.DisplayName -Status 'Failed' -Detail $detail
+                throw "Label priority reorder failed for '$($lbl.DisplayName)'. $detail. Re-run after addressing the underlying error."
             }
         }
     }
 
     # Phase A2 — pin unmanaged top-levels (Personal first in $pinOrder so
-    # it gets pushed LAST and ends up at slot 0). Uses Get-Label -Identity
-    # already, so live reads are in place.
+    # it gets pushed LAST and ends up at slot 0). Uses the same verified
+    # helper so MS-default unmanaged labels (e.g. 'Personal') also benefit
+    # from identity-form fallback.
     for ($i = $pinOrder.Count - 1; $i -ge 0; $i--) {
         $u = $pinOrder[$i]
-        $uObj = Get-Label -Identity $u.Name -ErrorAction SilentlyContinue
-        if (-not $uObj) { continue }
-        if ($PSCmdlet.ShouldProcess($uObj.Name, "Set priority=0 (pin unmanaged label)")) {
-            try {
-                Invoke-WithTransientRetry -Description ("Set-Label priority=0 (unmanaged) '$($u.DisplayName)'") -Action {
-                    Set-Label -Identity $uObj.Name -Priority 0 `
-                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-                }
-            } catch {
-                $priorityErr = Format-IPPSError $_
-                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
-                    throw "Label priority reorder failed for unmanaged label '$($u.DisplayName)': $priorityErr. Re-run after fixing the underlying error."
-                }
+        $uLive = Get-LiveLabelByObject -LabelObject $u
+        if (-not $uLive) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (unmanaged)' `
+                -Target $u.DisplayName -Status 'Skipped' `
+                -Detail "Bulk Get-Label could not resolve unmanaged top-level label '$($u.DisplayName)'. May have been deleted between Phase A and Phase A2."
+            continue
+        }
+        if ($PSCmdlet.ShouldProcess($uLive.Name, "Set priority=0 (pin unmanaged label)")) {
+            $r = Set-LabelPriorityWithVerify -LabelObject $uLive -TargetPriority 0 -DisplayNameForLog $u.DisplayName
+            if (-not $r.Success) {
+                $detail = "All identity forms failed to pin unmanaged label. Attempts: " + ($r.Attempts -join ' | ')
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (unmanaged)' `
+                    -Target $u.DisplayName -Status 'Failed' -Detail $detail
+                throw "Label priority reorder failed for unmanaged label '$($u.DisplayName)'. $detail. Re-run after addressing the underlying error."
             }
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (unmanaged)' `
+                -Target $u.DisplayName -Status 'Succeeded' `
+                -Detail ("Used identity '{0}'." -f $r.UsedIdentity)
         }
     }
 }
@@ -916,10 +1107,21 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
 # surface stale child priority values and cause us to target the wrong slot.
 foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels -or $lbl.SubLabels.Count -eq 0) { continue }
-    $parentMeta = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
-    if (-not $parentMeta) { continue }
-    $parentObj = Get-Label -Identity $parentMeta.Name -ErrorAction SilentlyContinue
-    if (-not $parentObj) { continue }
+    $parentMeta = Resolve-ConfigParentLabel -LabelDef $lbl
+    if (-not $parentMeta) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Phase B parent resolve' `
+            -Target $lbl.DisplayName -Status 'Skipped' `
+            -Detail "Parent label could not be resolved; sub-label reorder skipped for '$($lbl.DisplayName)'."
+        continue
+    }
+    $parentObj = Get-LiveLabelByObject -LabelObject $parentMeta
+    if (-not $parentObj) { $parentObj = $parentMeta }
+    if (-not $parentObj.Guid) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Phase B parent resolve' `
+            -Target $lbl.DisplayName -Status 'Skipped' `
+            -Detail "Parent label resolved but has no Guid; cannot match sub-labels by ParentId. Skipping."
+        continue
+    }
 
     $firstChildSlot = [int]$expectedParentPriority[$lbl.DisplayName] + 1
 
@@ -929,7 +1131,7 @@ foreach ($lbl in $Config.Labels) {
     foreach ($sub in $lbl.SubLabels) {
         $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
         if (-not $subMeta) { $childrenCorrect = $false; break }
-        $subLive = Get-Label -Identity $subMeta.Name -ErrorAction SilentlyContinue
+        $subLive = Get-LiveLabelByObject -LabelObject $subMeta
         if (-not $subLive -or $subLive.Priority -ne $expectedSlot) { $childrenCorrect = $false; break }
         $expectedSlot++
     }
@@ -938,23 +1140,136 @@ foreach ($lbl in $Config.Labels) {
     for ($i = $lbl.SubLabels.Count - 1; $i -ge 0; $i--) {
         $sub = $lbl.SubLabels[$i]
         $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
-        if (-not $subMeta) { continue }
-        $subLive = Get-Label -Identity $subMeta.Name -ErrorAction SilentlyContinue
-        if (-not $subLive) { continue }
-        if ($PSCmdlet.ShouldProcess($subMeta.Name, "Set priority=$firstChildSlot (sub-label reorder)")) {
-            try {
-                Invoke-WithTransientRetry -Description ("Set-Label priority=$firstChildSlot '$($sub.DisplayName)'") -Action {
-                    Set-Label -Identity $subMeta.Name -Priority $firstChildSlot `
-                        -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
-                }
-            } catch {
-                $priorityErr = Format-IPPSError $_
-                if ($priorityErr -notmatch 'not a valid priority|is not valid') {
-                    Write-Warning "    Priority update failed for '$($sub.DisplayName)': $priorityErr"
-                }
+        if (-not $subMeta) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Set-Label priority=$firstChildSlot" `
+                -Target $sub.DisplayName -Status 'Skipped' `
+                -Detail "Sub-label could not be resolved under parent '$($lbl.DisplayName)'."
+            continue
+        }
+        $subIdentForShouldProcess = Get-StableLabelIdentity -LabelObject $subMeta
+        if ($PSCmdlet.ShouldProcess($subIdentForShouldProcess, "Set priority=$firstChildSlot (sub-label reorder)")) {
+            $r = Set-LabelPriorityWithVerify -LabelObject $subMeta -TargetPriority $firstChildSlot `
+                    -DisplayNameForLog ("{0}/{1}" -f $lbl.DisplayName, $sub.DisplayName) -IsSubLabel
+            if (-not $r.Success) {
+                $detail = "All identity forms failed to update sub-label priority. Attempts: " + ($r.Attempts -join ' | ')
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Set-Label priority=$firstChildSlot" `
+                    -Target $sub.DisplayName -Status 'Failed' -Detail $detail
+                # Sub-label failures are warned but don't throw — the post-reorder
+                # verification covers top-level priorities; sub-label ordering
+                # within a block is best-effort and recoverable in Purview UI.
+                Write-Warning "    Sub-label priority update failed for '$($sub.DisplayName)'. See run log for details."
             }
         }
     }
+}
+
+# ---------------------------------------------------------------------------
+# Pass 3 verification — confirm every configured top-level label is at its
+# expected priority. If not, attempt ONE recovery push, then re-verify and
+# throw with a diagnostic detail if still wrong.
+#
+# This catches silent skips in Phase A (e.g. a Microsoft-default label that
+# bulk Get-Label fails to surface), which is how 'Public' previously got
+# stranded at the wrong priority without any error in the run log.
+# ---------------------------------------------------------------------------
+$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+
+function Test-ParentPrioritiesCorrect {
+    $mismatches = @()
+    foreach ($lbl in $Config.Labels) {
+        $obj = Resolve-ConfigParentLabel -LabelDef $lbl
+        if (-not $obj) {
+            $mismatches += [pscustomobject]@{
+                Label    = $lbl
+                Reason   = 'unresolved'
+                Identity = $null
+                Actual   = $null
+                Expected = $expectedParentPriority[$lbl.DisplayName]
+            }
+            continue
+        }
+        # Use the robust bulk-fetch resolver instead of Get-Label -Identity,
+        # because Get-Label -Identity by Guid returns null for some
+        # Microsoft-default labels even when the label clearly exists in the
+        # tenant. That false-null is what previously made the verifier
+        # report "live-lookup-failed" for Public.
+        $live = Get-LiveLabelByObject -LabelObject $obj
+        $actual = if ($live) { $live.Priority } else { $obj.Priority }
+        $expected = $expectedParentPriority[$lbl.DisplayName]
+        if ($actual -ne $expected) {
+            $mismatches += [pscustomobject]@{
+                Label    = $lbl
+                Reason   = if ($live) { 'wrong-priority' } else { 'live-lookup-failed' }
+                Identity = if ($obj.Guid) { [string]$obj.Guid } else { [string]$obj.Name }
+                Actual   = $actual
+                Expected = $expected
+            }
+        }
+    }
+    return ,$mismatches
+}
+
+$mismatches = Test-ParentPrioritiesCorrect
+if ($mismatches.Count -gt 0) {
+    Write-Host "  ! Priority order off after primary reorder; attempting recovery..." -ForegroundColor Yellow
+    # Reverse-iterate Config.Labels (same direction as Phase A) and push any
+    # mismatched label to slot 0 using the same verified helper. The reverse
+    # direction preserves intent: the LAST push wins slot 0, so we need to
+    # push every label above the lowest mismatched label as well.
+    $mismatchedNames = @{}
+    foreach ($m in $mismatches) { $mismatchedNames[$m.Label.Name] = $true }
+    for ($i = $Config.Labels.Count - 1; $i -ge 0; $i--) {
+        $lbl = $Config.Labels[$i]
+        if (-not $mismatchedNames.ContainsKey($lbl.Name)) { continue }
+        $obj = Resolve-ConfigParentLabel -LabelDef $lbl
+        if (-not $obj) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (recovery)' `
+                -Target $lbl.DisplayName -Status 'Failed' `
+                -Detail "Cannot resolve label for recovery push."
+            continue
+        }
+        $idForShouldProcess = Get-StableLabelIdentity -LabelObject $obj
+        if ($PSCmdlet.ShouldProcess($idForShouldProcess, "Set priority=0 (priority recovery)")) {
+            $r = Set-LabelPriorityWithVerify -LabelObject $obj -TargetPriority 0 -DisplayNameForLog $lbl.DisplayName
+            if ($r.Success) {
+                $script:createdParents[$lbl.Name] = $r.Live
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (recovery)' `
+                    -Target $lbl.DisplayName -Status 'Succeeded' `
+                    -Detail ("Used identity '{0}'. Attempts: {1}" -f $r.UsedIdentity, ($r.Attempts -join ' | '))
+            } else {
+                $detail = "All identity forms failed during recovery. Attempts: " + ($r.Attempts -join ' | ')
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (recovery)' `
+                    -Target $lbl.DisplayName -Status 'Failed' -Detail $detail
+                Write-Warning "    Recovery Set-Label failed for '$($lbl.DisplayName)': $detail"
+            }
+        }
+    }
+    # Re-pin unmanaged labels (Personal last so it lands at 0) after the recovery push.
+    for ($i = $pinOrder.Count - 1; $i -ge 0; $i--) {
+        $u = $pinOrder[$i]
+        $uLive = Get-LiveLabelByObject -LabelObject $u
+        if (-not $uLive) { continue }
+        if ($PSCmdlet.ShouldProcess($uLive.Name, "Set priority=0 (recovery pin unmanaged)")) {
+            $r = Set-LabelPriorityWithVerify -LabelObject $uLive -TargetPriority 0 -DisplayNameForLog $u.DisplayName
+            if (-not $r.Success) {
+                Write-Warning "    Recovery Set-Label failed for unmanaged label '$($u.DisplayName)'. See run log for diagnostic detail."
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label priority=0 (recovery unmanaged)' `
+                    -Target $u.DisplayName -Status 'Failed' `
+                    -Detail ("All identity forms failed. Attempts: " + ($r.Attempts -join ' | '))
+            }
+        }
+    }
+    $script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+    $mismatches = Test-ParentPrioritiesCorrect
+}
+if ($mismatches.Count -gt 0) {
+    $lines = foreach ($m in $mismatches) {
+        "  - '$($m.Label.DisplayName)' (Id: $($m.Identity)) is at priority $($m.Actual); expected $($m.Expected) [reason: $($m.Reason)]"
+    }
+    $detail = "Sensitivity label priority order is incorrect after reorder + recovery:`n" + ($lines -join "`n")
+    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Verify-LabelPriority' `
+        -Target 'all top-level labels' -Status 'Failed' -Detail $detail
+    throw $detail
 }
 
 # Surface MS-managed labels (e.g. tenant-provisioned 'Personal') that are
