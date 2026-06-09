@@ -325,6 +325,102 @@ function ConvertTo-PurviewJsonString {
     return $sb.ToString()
 }
 
+function Test-LabelIsApplicable {
+    <#
+        Detects whether a sensitivity label can be applied to content.
+
+        In the modern label scheme (https://learn.microsoft.com/en-us/purview/migrate-sensitivity-label-scheme)
+        parent labels are demoted to "label groups": they organise their
+        sub-labels in the picker but cannot themselves be applied to
+        documents or messages. The IPPS engine reports their ContentType
+        as 'None' (or empty), and Copilot DLP rejects them with
+        "<Name> is an unsupported content type (None). M365Copilot only
+        supports files and Email."
+
+        Legacy parents and all sub-labels carry ContentType bits such as
+        'File, Email' and ARE applicable.
+
+        Returns $true when the label is applicable to content;
+        $false when it is a label group / non-applicable container.
+    #>
+    param($Label)
+
+    if (-not $Label) { return $false }
+    if (-not ($Label.PSObject.Properties.Name -contains 'ContentType')) {
+        # Older module shape -- assume applicable to preserve legacy behaviour.
+        return $true
+    }
+    $ct = $Label.ContentType
+    if ($null -eq $ct) { return $false }
+    $ctStr = ($ct.ToString()).Trim()
+    if ($ctStr -eq '' -or $ctStr -ieq 'None') { return $false }
+    return $true
+}
+
+function Get-LiveSubLabelsForParent {
+    <#
+        Return all live (not soft-deleted, not disabled) sub-labels for a
+        given parent label. Used to expand label groups in the modern
+        scheme so the Copilot DLP rule references applicable sub-labels
+        instead of an unsupported group container.
+    #>
+    param($Parent)
+
+    if (-not $Parent -or -not $Parent.Guid) { return @() }
+    return @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
+        $_.ParentId -eq $Parent.Guid -and
+        -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
+              ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
+    }
+}
+
+function Expand-CopilotLabelEntry {
+    <#
+        Resolve a LabelPath entry into the list of labels the Copilot DLP
+        rule should reference. The DLP engine validates each label's
+        ContentType server-side, so referencing a modern-scheme label
+        group (ContentType=None) causes the entire rule update to fail
+        with "unsupported content type (None)".
+
+        Behaviour:
+          - Sub-label (has ParentId): use as-is.
+          - Parent that IS applicable (legacy scheme): use as-is. This
+            preserves prior behaviour for tenants still on the legacy
+            parent-label scheme where the parent itself can carry a
+            classification.
+          - Parent that is NOT applicable (modern-scheme label group):
+            expand to all live sub-labels and emit an info message so the
+            partner understands what happened.
+          - WhatIf preview placeholder: pass through unchanged so
+            -WhatIf reporting still works against a fresh tenant.
+    #>
+    param(
+        [Parameter(Mandatory)] $Label,
+        [Parameter(Mandatory)] [string] $Path
+    )
+
+    if ($Label.PSObject.Properties.Name -contains 'IsPreview' -and $Label.IsPreview) {
+        return ,$Label
+    }
+
+    if ($Label.PSObject.Properties.Name -contains 'ParentId' -and $Label.ParentId) {
+        return ,$Label
+    }
+
+    if (Test-LabelIsApplicable -Label $Label) {
+        return ,$Label
+    }
+
+    $subs = Get-LiveSubLabelsForParent -Parent $Label
+    if (-not $subs -or $subs.Count -eq 0) {
+        throw "Label path '$Path' resolved to label group '$($Label.DisplayName)' (Name='$($Label.Name)') which has ContentType='None' and no live sub-labels. Copilot DLP can only reference labels that are applicable to content. Either add sub-labels under this group in the Purview portal or replace the entry in PurviewConfig.psd1 AIGovernance.DlpPolicies[].LabelPaths with explicit sub-label paths (e.g. 'HighlyConfidential/HCAllEmps')."
+    }
+    $subDisplay = ($subs | ForEach-Object { $_.DisplayName }) -join ', '
+    Write-Host "    Label path '$Path' is a modern-scheme label group (ContentType=None); expanded to $($subs.Count) applicable sub-label(s): $subDisplay." -ForegroundColor DarkYellow
+    Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Expand label group' -Target $Path -Status 'Info' -Detail "Modern-scheme label group '$($Label.DisplayName)' (Guid=$($Label.Guid)) expanded to sub-labels: $subDisplay."
+    return $subs
+}
+
 function Build-CopilotAdvancedRuleJson {
     <#
         Build the AdvancedRule JSON body for a Copilot/Application-location DLP
@@ -473,13 +569,26 @@ foreach ($cfg in $Config.AIGovernance.DlpPolicies) {
         throw "AI DLP policy '$($cfg.Name)' has no LabelPaths configured. Add at least one parent or parent/child path."
     }
     $labelInfos = @()
+    $seenGuids  = @{}
     foreach ($lp in $labelPaths) {
         $lbl = Resolve-LabelByPath -Path $lp
-        $labelInfos += [pscustomobject]@{
-            Name = $lbl.Name
-            Guid = $lbl.Guid.ToString()
+        $expanded = Expand-CopilotLabelEntry -Label $lbl -Path $lp
+        foreach ($e in @($expanded)) {
+            $g = $e.Guid.ToString()
+            if ($seenGuids.ContainsKey($g)) {
+                Write-Verbose "  Skipping duplicate label '$($e.Name)' ($g) — already added via another LabelPath."
+                continue
+            }
+            $seenGuids[$g] = $true
+            $labelInfos += [pscustomobject]@{
+                Name = $e.Name
+                Guid = $g
+            }
+            Write-Verbose "  Resolved '$lp' -> '$($e.Name)' ($g)"
         }
-        Write-Verbose "  Resolved '$lp' to '$($lbl.Name)' ($($lbl.Guid))"
+    }
+    if ($labelInfos.Count -eq 0) {
+        throw "AI DLP policy '$($cfg.Name)' resolved no usable sensitivity labels from LabelPaths. Check that the labels exist and are applicable to content (label groups must have live sub-labels)."
     }
 
     # -------------------------------------------------------------------
