@@ -205,7 +205,32 @@ function Invoke-WithTransientRetry {
     # Tier-2: detect whether the run-log helper is loaded in the current
     # session. Cache the result for the duration of this invocation.
     $logEnabled = [bool](Get-Command 'Add-RunLogEntry' -ErrorAction SilentlyContinue)
-    $logModule  = if ($Module) { $Module } else { 'Retry' }
+
+    # Resolve the run-log Module bucket:
+    #   1. Explicit -Module wins (caller knows best).
+    #   2. Otherwise auto-derive from the first call-stack frame that
+    #      isn't this helper itself. For a retry call originating in
+    #      Setup-TenantSettings.ps1 this yields 'Setup-TenantSettings',
+    #      so every wrapped op shows up under the correct module bucket
+    #      in the HTML/JSON report without any callsite change.
+    #   3. Deep fallback to 'Retry' only when no script context exists
+    #      (e.g. interactive REPL invocation).
+    # Background: prior to this auto-derive, every retry-wrapped op
+    # without -Module landed under a literal 'Retry' bucket -- 35
+    # callsites across 5 Setup-* modules were all collapsed there,
+    # making per-module audit impossible. See skill file Decisions log.
+    if ($Module) {
+        $logModule = $Module
+    } else {
+        $caller = Get-PSCallStack | Where-Object {
+            $_.ScriptName -and ($_.ScriptName -notmatch 'Invoke-WithTransientRetry\.ps1$')
+        } | Select-Object -First 1
+        if ($caller) {
+            $logModule = [System.IO.Path]::GetFileNameWithoutExtension($caller.ScriptName)
+        } else {
+            $logModule = 'Retry'
+        }
+    }
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
