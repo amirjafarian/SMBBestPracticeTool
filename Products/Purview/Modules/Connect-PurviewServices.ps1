@@ -114,6 +114,158 @@ $ErrorActionPreference = 'Stop'
 $WhatIfPreference = $false
 $ConfirmPreference = 'None'
 
+# ---------------------------------------------------------------------------
+# Run log helper — idempotent dot-source so Add-RunLogEntry is available even
+# when this script is invoked standalone (i.e. without the orchestrator). The
+# helper itself wraps all writes in try/catch and lazy-inits $global:PurviewRunLog,
+# so calling it when no run log was initialised is a silent no-op.
+# Same pattern as Invoke-WithTransientRetry.ps1.
+# ---------------------------------------------------------------------------
+$_purviewRunLogPath = Join-Path $PSScriptRoot 'PurviewRunLog.ps1'
+if (Test-Path $_purviewRunLogPath) {
+    . $_purviewRunLogPath
+}
+
+function Add-ConnectGuardLog {
+    <#
+        Emits a structured Add-RunLogEntry for a connect-side session guard
+        decision. Detail is built as 'reason=<key>; k1=v1; k2=v2; ...' using
+        stable key names so operators can grep / filter Get-PurviewRunLog
+        output after the fact.
+
+        Status semantics for this helper:
+          * Info    — guard accepted the cached session OR neutral observation
+          * Started — about to call Connect-* (cold start or after stale discard)
+          * Retried — guard rejected the cached session and will reconnect
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Service,
+        [Parameter(Mandatory)]
+        [ValidateSet('Info','Started','Retried','Skipped')]
+        [string] $Status,
+        [Parameter(Mandatory)] [string] $ReasonKey,
+        [hashtable] $Detail
+    )
+
+    if (-not (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue)) { return }
+
+    $parts = @("reason=$ReasonKey")
+    if ($Detail) {
+        foreach ($k in ($Detail.Keys | Sort-Object)) {
+            $v = $Detail[$k]
+            if ($null -eq $v) { $v = '' }
+            $parts += ('{0}={1}' -f $k, $v)
+        }
+    }
+
+    try {
+        Add-RunLogEntry -Module 'Connect-PurviewServices' `
+            -Action "SessionGuard:$Service" `
+            -Status $Status `
+            -Detail ($parts -join '; ')
+    } catch {
+        Write-Verbose "Add-ConnectGuardLog failed: $($_.Exception.Message)"
+    }
+}
+
+function Test-WamBrokerReadiness {
+    <#
+        Best-effort readiness check for Windows Authentication Manager (WAM).
+        Returns a PSCustomObject with:
+          * Eligible — $true when no blocking issues were found
+          * Issues   — list of short human-readable problem descriptions
+          * Info     — diagnostic hashtable for the run log
+
+        WAM is enabled by default on Windows 10 / Server 2019 and later in current
+        Microsoft.Graph.Authentication (>= 2.x) and ExchangeOnlineManagement
+        (>= 3.3). When WAM is active, second-and-subsequent sign-in prompts show
+        the single-click "Continue" account picker instead of a full browser
+        sign-in. When unavailable, every service connection falls back to a
+        browser popup — that is the cause of the "6 prompts per run" symptom.
+
+        Per MS Learn: 'Signin by Web Account Manager (WAM) is enabled by default
+        on Windows and cannot be disabled' in current modules — so no runtime
+        DisableLoginByWAM check is performed; we only check environment + module
+        readiness here.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $issues = @()
+    $info   = [ordered]@{
+        wamEligible            = $false
+        psEdition              = $PSVersionTable.PSEdition
+        psVersion              = $PSVersionTable.PSVersion.ToString()
+        isWindows              = [bool]$IsWindows
+        windowsBuild           = $null
+        productType            = $null
+        userInteractive        = [Environment]::UserInteractive
+        runningAsSystem        = $false
+        graphAuthModuleVersion = 'not-installed'
+        exoModuleVersion       = 'not-installed'
+    }
+
+    if (-not $IsWindows) {
+        $issues += "Not running on Windows — WAM is a Windows-only broker; every connect call falls back to a browser popup."
+        return [pscustomobject]@{ Eligible = $false; Issues = $issues; Info = $info }
+    }
+
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $build = [int]($os.BuildNumber)
+        $productType = [int]$os.ProductType  # 1=workstation, 2=DC, 3=server
+        $info.windowsBuild = $build
+        $info.productType  = $productType
+
+        if ($productType -eq 1 -and $build -lt 10240) {
+            $issues += "Windows build $build is older than Windows 10 1507 (10240) — WAM not available."
+        } elseif ($productType -ge 2 -and $build -lt 17763) {
+            $issues += "Windows Server build $build is older than Server 2019 (17763) — WAM not available."
+        }
+    } catch {
+        # CIM failure is non-fatal; treat as 'unknown', not a blocker.
+        Write-Verbose "Could not detect Windows build via CIM: $($_.Exception.Message)"
+    }
+
+    try {
+        $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if ($current -and $current.IsSystem) {
+            $info.runningAsSystem = $true
+            $issues += "Running as SYSTEM — WAM requires a user desktop session; sign-in will fall back to browser."
+        }
+    } catch { }
+
+    if (-not [Environment]::UserInteractive) {
+        $issues += "PowerShell host is not interactive — WAM popup requires an interactive desktop session."
+    }
+
+    $mgMod = Get-Module Microsoft.Graph.Authentication -ListAvailable -ErrorAction SilentlyContinue |
+        Sort-Object Version -Descending | Select-Object -First 1
+    if ($mgMod) {
+        $info.graphAuthModuleVersion = $mgMod.Version.ToString()
+        if ($mgMod.Version.Major -lt 2) {
+            $issues += "Microsoft.Graph.Authentication v$($mgMod.Version) predates built-in WAM (need 2.x). Update: Update-Module Microsoft.Graph.Authentication"
+        }
+    }
+
+    $exoMod = Get-Module ExchangeOnlineManagement -ListAvailable -ErrorAction SilentlyContinue |
+        Sort-Object Version -Descending | Select-Object -First 1
+    if ($exoMod) {
+        $info.exoModuleVersion = $exoMod.Version.ToString()
+        if ($exoMod.Version -lt [version]'3.3.0') {
+            $issues += "ExchangeOnlineManagement v$($exoMod.Version) predates WAM integration (need 3.3+). Update: Update-Module ExchangeOnlineManagement"
+        }
+    }
+
+    $info.wamEligible = ($issues.Count -eq 0)
+    [pscustomobject]@{
+        Eligible = $info.wamEligible
+        Issues   = $issues
+        Info     = $info
+    }
+}
+
 function Test-IsAdmin {
     try {
         $current = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -162,15 +314,32 @@ function Invoke-SpoConnectWithFallback {
     )
 
     $spoConnected = $false
+    $spoProbeError = $null
     try {
         $current = Get-SPOTenant -ErrorAction Stop
         if ($current) { $spoConnected = $true }
-    } catch { $spoConnected = $false }
+    } catch {
+        $spoConnected = $false
+        $spoProbeError = $_.Exception.Message
+    }
 
     if ($spoConnected) {
+        Add-ConnectGuardLog -Service 'SPO' -Status 'Info' -ReasonKey 'reused' -Detail @{
+            check                = 'Get-SPOTenant'
+            expectedAdminUrl     = $SharePointAdminUrl
+            actualTenantIdentity = 'unverified'
+        }
         Write-Host "SharePoint Online: existing session reused." -ForegroundColor DarkGray
         return
     }
+
+    Add-ConnectGuardLog -Service 'SPO' -Status 'Started' `
+        -ReasonKey ($(if ($spoProbeError) { 'probe-failed' } else { 'no-existing-session' })) `
+        -Detail @{
+            check            = 'Get-SPOTenant'
+            expectedAdminUrl = $SharePointAdminUrl
+            probeError       = ($spoProbeError -as [string])
+        }
 
     $spoMod = Get-Module Microsoft.Online.SharePoint.PowerShell -ErrorAction SilentlyContinue |
         Select-Object -First 1
@@ -362,6 +531,30 @@ function Ensure-RequiredModule {
 }
 
 # ---------------------------------------------------------------------------
+# WAM (Windows Authentication Manager) broker readiness
+# ---------------------------------------------------------------------------
+# Run BEFORE any module load / connect so the user gets a clear up-front
+# explanation when prompts will be heavier than expected. This is observation
+# only — we do not change connect arguments. WAM is on by default in current
+# Microsoft.Graph.Authentication (>= 2.x) and ExchangeOnlineManagement
+# (>= 3.3); the helper just surfaces blockers (non-Windows, SYSTEM, etc.).
+$wamReadiness = Test-WamBrokerReadiness
+if ($wamReadiness.Eligible) {
+    Write-Host "WAM broker available: sign-in prompts should be reduced (often 1-click 'Continue')." -ForegroundColor DarkGray
+    Write-Host "  Note: first-time consent, tenant switches, missing scopes, stale sessions, or SharePoint can still trigger additional prompts." -ForegroundColor DarkGray
+} else {
+    Write-Warning "Windows Authentication Manager (WAM) broker is not fully usable in this environment."
+    Write-Warning "Expect a browser sign-in popup per service (Exchange Online, Security & Compliance, SharePoint, Microsoft Graph)."
+    foreach ($issue in $wamReadiness.Issues) {
+        Write-Warning "  * $issue"
+    }
+    Write-Warning "  See Products/Purview/README.md -> 'Sign-in prompts (WAM broker)' for guidance."
+}
+Add-ConnectGuardLog -Service 'Startup' -Status 'Info' `
+    -ReasonKey ($(if ($wamReadiness.Eligible) { 'wam-ready' } else { 'wam-not-ready' })) `
+    -Detail $wamReadiness.Info
+
+# ---------------------------------------------------------------------------
 # Module checks (auto-install on demand)
 # ---------------------------------------------------------------------------
 # Following the Zero Trust Assessment pattern: load EXO module up front,
@@ -396,6 +589,7 @@ if ($ConnectGraph) {
 # tenant.
 $exoConnected = $false
 $staleExo     = @()
+$exoLookupOk  = $true
 try {
     $exoSessions = @(Get-ConnectionInformation -ErrorAction Stop |
         Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.Name -like 'ExchangeOnline*' -and $_.ConnectionUri -notlike '*compliance.protection.outlook.com*' })
@@ -407,9 +601,26 @@ try {
             [string]::IsNullOrEmpty($s.DelegatedOrganization)
         }
         if ($upnOk -and $delegOk) { $exoConnected = $true }
-        else { $staleExo += $s }
+        else {
+            $reasonKey = if (-not $upnOk -and -not $delegOk) { 'upn-and-deleg-org-mismatch' }
+                         elseif (-not $upnOk) { 'upn-mismatch' }
+                         else { 'deleg-org-mismatch' }
+            Add-ConnectGuardLog -Service 'EXO' -Status 'Retried' -ReasonKey $reasonKey -Detail @{
+                expectedUpn          = $TenantAdminUpn
+                actualUpn            = ($s.UserPrincipalName -as [string])
+                expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+                actualDelegatedOrg   = ($s.DelegatedOrganization -as [string])
+            }
+            $staleExo += $s
+        }
     }
-} catch { $exoConnected = $false }
+} catch {
+    $exoConnected = $false
+    $exoLookupOk  = $false
+    Add-ConnectGuardLog -Service 'EXO' -Status 'Info' -ReasonKey 'get-connectioninformation-failed' -Detail @{
+        error = $_.Exception.Message
+    }
+}
 
 if ($staleExo.Count -gt 0) {
     $targetDesc = if ($DelegatedOrganization) { "$TenantAdminUpn -> $DelegatedOrganization" } else { $TenantAdminUpn }
@@ -424,8 +635,19 @@ if ($staleExo.Count -gt 0) {
 }
 
 if ($exoConnected) {
+    Add-ConnectGuardLog -Service 'EXO' -Status 'Info' -ReasonKey 'reused' -Detail @{
+        expectedUpn          = $TenantAdminUpn
+        expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+    }
     Write-Host "Exchange Online: existing session reused (UPN + delegated-org match)." -ForegroundColor DarkGray
 } else {
+    $exoColdReason = if (-not $exoLookupOk) { 'reconnect-after-lookup-failure' }
+                     elseif ($staleExo.Count -gt 0) { 'reconnect-after-stale-discard' }
+                     else { 'no-existing-session' }
+    Add-ConnectGuardLog -Service 'EXO' -Status 'Started' -ReasonKey $exoColdReason -Detail @{
+        expectedUpn          = $TenantAdminUpn
+        expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+    }
     $signInBanner = if ($DelegatedOrganization) { "$TenantAdminUpn (GDAP delegated: $DelegatedOrganization)" } else { $TenantAdminUpn }
     Write-Host "Connecting to Exchange Online as $signInBanner..." -ForegroundColor Cyan
     $exoArgs = @{ UserPrincipalName = $TenantAdminUpn; ShowBanner = $false }
@@ -458,6 +680,7 @@ if ($exoConnected) {
 # silently routes every Set-Label / Set-Dlp* call to the wrong customer.
 $ippsConnected = $false
 $staleIpps     = @()
+$ippsLookupOk  = $true
 try {
     $ippsSessions = @(Get-ConnectionInformation -ErrorAction Stop |
         Where-Object { $_.State -eq 'Connected' -and $_.TokenStatus -eq 'Active' -and $_.ConnectionUri -like '*compliance.protection.outlook.com*' })
@@ -469,9 +692,26 @@ try {
             [string]::IsNullOrEmpty($s.DelegatedOrganization)
         }
         if ($upnOk -and $delegOk) { $ippsConnected = $true }
-        else { $staleIpps += $s }
+        else {
+            $reasonKey = if (-not $upnOk -and -not $delegOk) { 'upn-and-deleg-org-mismatch' }
+                         elseif (-not $upnOk) { 'upn-mismatch' }
+                         else { 'deleg-org-mismatch' }
+            Add-ConnectGuardLog -Service 'IPPS' -Status 'Retried' -ReasonKey $reasonKey -Detail @{
+                expectedUpn          = $TenantAdminUpn
+                actualUpn            = ($s.UserPrincipalName -as [string])
+                expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+                actualDelegatedOrg   = ($s.DelegatedOrganization -as [string])
+            }
+            $staleIpps += $s
+        }
     }
-} catch { $ippsConnected = $false }
+} catch {
+    $ippsConnected = $false
+    $ippsLookupOk  = $false
+    Add-ConnectGuardLog -Service 'IPPS' -Status 'Info' -ReasonKey 'get-connectioninformation-failed' -Detail @{
+        error = $_.Exception.Message
+    }
+}
 
 if ($staleIpps.Count -gt 0) {
     $targetDesc = if ($DelegatedOrganization) { "$TenantAdminUpn -> $DelegatedOrganization" } else { $TenantAdminUpn }
@@ -486,8 +726,19 @@ if ($staleIpps.Count -gt 0) {
 }
 
 if ($ippsConnected) {
+    Add-ConnectGuardLog -Service 'IPPS' -Status 'Info' -ReasonKey 'reused' -Detail @{
+        expectedUpn          = $TenantAdminUpn
+        expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+    }
     Write-Host "Security & Compliance (IPPS): existing session reused (UPN + delegated-org match)." -ForegroundColor DarkGray
 } else {
+    $ippsColdReason = if (-not $ippsLookupOk) { 'reconnect-after-lookup-failure' }
+                      elseif ($staleIpps.Count -gt 0) { 'reconnect-after-stale-discard' }
+                      else { 'no-existing-session' }
+    Add-ConnectGuardLog -Service 'IPPS' -Status 'Started' -ReasonKey $ippsColdReason -Detail @{
+        expectedUpn          = $TenantAdminUpn
+        expectedDelegatedOrg = ($DelegatedOrganization -as [string])
+    }
     $ippsBanner = if ($DelegatedOrganization) { " (GDAP delegated: $DelegatedOrganization)" } else { '' }
     Write-Host "Connecting to Security & Compliance Center$ippsBanner..." -ForegroundColor Cyan
     $ippsArgs = @{ UserPrincipalName = $TenantAdminUpn; ShowBanner = $false }
@@ -566,6 +817,12 @@ if ($ConnectGraph) {
     $requiredScopes = @($GraphScopes | Where-Object { $_ } | Select-Object -Unique)
     if ($requiredScopes.Count -eq 0) { $requiredScopes = @('Organization.Read.All') }
     $graphConnected = $false
+    $graphGuardReason = $null
+    $graphGuardDetail = @{
+        expectedUpn            = $TenantAdminUpn
+        expectedTenantDomain   = $targetTenantDomain
+        expectedScopes         = ($requiredScopes -join ',')
+    }
     try {
         $ctx = Get-MgContext -ErrorAction Stop
         # Reuse only when the cached session belongs to the SAME admin, has the
@@ -580,6 +837,7 @@ if ($ConnectGraph) {
             $missingScopes.Count -eq 0) {
 
             $tenantOk = $true
+            $tenantCheckFailureKey = $null
             if ($DelegatedOrganization) {
                 # Confirm the cached session is actually authed against the customer
                 # tenant by listing verifiedDomains on /organization and looking for
@@ -593,29 +851,57 @@ if ($ConnectGraph) {
                         foreach ($d in @($o.verifiedDomains)) { if ($d.name) { $domains += $d.name.ToLowerInvariant() } }
                     }
                     $tenantOk = $domains -contains $DelegatedOrganization.ToLowerInvariant()
-                } catch { $tenantOk = $false }
+                    if (-not $tenantOk) { $tenantCheckFailureKey = 'tenant-domain-mismatch' }
+                } catch {
+                    $tenantOk = $false
+                    $tenantCheckFailureKey = 'tenant-verification-failed'
+                    $graphGuardDetail.tenantVerifyError = $_.Exception.Message
+                }
             }
 
             if ($tenantOk) {
                 $graphConnected = $true
+                $graphGuardReason = 'reused'
+                $graphGuardDetail.cachedAccount = $ctx.Account
+                $graphGuardDetail.cachedTenantId = ($ctx.TenantId -as [string])
             } else {
+                $graphGuardReason = $tenantCheckFailureKey
+                $graphGuardDetail.cachedAccount   = $ctx.Account
+                $graphGuardDetail.cachedTenantId  = ($ctx.TenantId -as [string])
+                $graphGuardDetail.actualContainsExpected = $false
                 Write-Host "Microsoft Graph: cached session is not authed against '$DelegatedOrganization'; reconnecting." -ForegroundColor DarkYellow
+                Add-ConnectGuardLog -Service 'Graph' -Status 'Retried' -ReasonKey $graphGuardReason -Detail $graphGuardDetail
                 try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
             }
         } elseif ($ctx) {
             $cachedAcct = if ($ctx.Account) { $ctx.Account } else { '(no account)' }
             if ($missingScopes.Count -gt 0 -and $ctx.Account -ieq $TenantAdminUpn) {
+                $graphGuardReason = 'missing-scopes'
+                $graphGuardDetail.cachedAccount = $cachedAcct
+                $graphGuardDetail.missingScopes = ($missingScopes -join ',')
                 Write-Host "Microsoft Graph: cached session for '$cachedAcct' is missing required scopes ($($missingScopes -join ', ')); reconnecting." -ForegroundColor DarkYellow
             } else {
+                $graphGuardReason = 'account-mismatch'
+                $graphGuardDetail.cachedAccount = $cachedAcct
                 Write-Host "Microsoft Graph: discarding cached session for '$cachedAcct' (does not match '$TenantAdminUpn' or required scopes)." -ForegroundColor DarkYellow
             }
+            Add-ConnectGuardLog -Service 'Graph' -Status 'Retried' -ReasonKey $graphGuardReason -Detail $graphGuardDetail
             try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+        } else {
+            $graphGuardReason = 'no-context'
         }
-    } catch { $graphConnected = $false }
+    } catch {
+        $graphConnected = $false
+        $graphGuardReason = 'get-mgcontext-failed'
+        $graphGuardDetail.error = $_.Exception.Message
+    }
 
     if ($graphConnected) {
+        Add-ConnectGuardLog -Service 'Graph' -Status 'Info' -ReasonKey 'reused' -Detail $graphGuardDetail
         Write-Host "Microsoft Graph: existing session reused (account + tenant + scopes match)." -ForegroundColor DarkGray
     } else {
+        $startedReason = if ($graphGuardReason) { "reconnect-$graphGuardReason" } else { 'no-existing-session' }
+        Add-ConnectGuardLog -Service 'Graph' -Status 'Started' -ReasonKey $startedReason -Detail $graphGuardDetail
         Write-Host ("Connecting to Microsoft Graph (Beta) for tenant {0} with scopes: {1}..." -f $targetTenantDomain, ($requiredScopes -join ', ')) -ForegroundColor Cyan
         Connect-MgGraph -TenantId $targetTenantDomain -Scopes $requiredScopes -NoWelcome
     }

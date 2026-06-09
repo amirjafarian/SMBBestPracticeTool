@@ -149,6 +149,48 @@ Then run the toolkit from a `pwsh` prompt (not `powershell`). The
 `Import-Module -UseWindowsPowerShell` automatically when running under PS 7,
 so no separate PS 5.1 step is needed.
 
+### Sign-in prompts (WAM broker)
+
+Each customer-tenant deploy needs sign-in tokens for up to four services
+(Exchange Online, Security & Compliance / IPPS, SharePoint Online, Microsoft
+Graph). The first run on a new admin account therefore shows several prompts.
+On subsequent runs the **Windows Authentication Manager (WAM) broker** turns
+most of those into single-click "Continue" confirmations instead of full
+browser sign-ins.
+
+WAM is on by default in current PowerShell modules
+(`Microsoft.Graph.Authentication` 2.x and `ExchangeOnlineManagement` 3.3+)
+when **all** of the following are true:
+
+| Requirement | Why |
+|---|---|
+| Running on **Windows 10 1507 (build 10240)** or later, or **Windows Server 2019 (build 17763)** or later | WAM is a Windows-only OS component. |
+| `pwsh.exe` was launched in your normal **interactive** desktop session (no RunAs, no scheduled task / SYSTEM, no SSH/remote PowerShell) | WAM uses the desktop user's signed-in tokens. |
+| `Microsoft.Graph.Authentication` ≥ 2.0 and `ExchangeOnlineManagement` ≥ 3.3 are installed | Older versions don't have WAM integration. Refresh with `Update-Module`. |
+
+The connect helper checks all of these at start-up and warns when WAM is not
+available — `Get-PurviewRunLog` records the result as a
+`SessionGuard:Startup` entry with `reason=wam-ready` or `wam-not-ready` plus
+the diagnostic fields it inspected.
+
+Even when WAM is available, the following still cause additional prompts:
+
+* **First-time consent** — granting `Organization.Read.All` (or
+  `Directory.ReadWrite.All` for container labels) on a new tenant always
+  shows the full consent screen once.
+* **GDAP tenant switches** — the Graph guard reauths when it detects the
+  cached session belongs to a different customer tenant
+  (`reason=tenant-domain-mismatch` in the run log).
+* **Missing scopes** — adding a new scope to an existing cached session
+  triggers a re-consent prompt (`reason=missing-scopes`).
+* **SharePoint Online** — `Connect-SPOService` does not expose WAM, so the
+  SPO connect always uses its own MSAL flow.
+
+When you see more prompts than expected, run
+`Get-PurviewRunLog | Where-Object Action -like 'SessionGuard:*'` after the
+deploy — every prompt is preceded by a structured log entry that names
+which check failed and what was expected vs observed.
+
 ---
 
 ## File layout
