@@ -89,11 +89,22 @@
     # with its parent (e.g. `HCAllEmps`). The `AllEmployees` Name on
     # Confidential is preserved unchanged so existing DLP rules with
     # `LabelPath = 'Confidential/AllEmployees'` keep resolving.
+    #
+    # Label color
+    # -----------
+    # Each label has an optional `Color = '#RRGGBB'` hex string. The toolkit
+    # applies it via `New-Label`/`Set-Label -AdvancedSettings @{color=...}`
+    # so the colour shows up next to the label in Office and Purview. Defaults
+    # below mirror Microsoft's recommended palette (green=Public, blue=General,
+    # amber=Confidential family, red=Highly Confidential family). Sub-labels
+    # inherit their parent's family colour. To disable, remove the `Color`
+    # entry — the toolkit will leave the label's current colour unchanged.
     Labels = @(
         @{
             Name        = 'Public'
             DisplayName = 'Public'
             Tooltip     = 'Business data that is specifically prepared and approved for public consumption.'
+            Color       = '#13A10E'
             Encrypt     = $false
             ContentMark = $false
         }
@@ -101,6 +112,7 @@
             Name        = 'General'
             DisplayName = 'General'
             Tooltip     = 'Business data that is not intended for public consumption. However, this can be shared with external partners, as required. Examples include a company internal telephone directory, organizational charts, internal standards, and most internal communication.'
+            Color       = '#3A96DD'
             Encrypt     = $false
             ContentMark = $false
         }
@@ -108,6 +120,7 @@
             Name        = 'Confidential'
             DisplayName = 'Confidential'
             Tooltip     = 'Sensitive business data that could cause damage to the business if shared with unauthorized people. Examples include contracts, security reports, forecast summaries, and sales account data.'
+            Color       = '#EAA300'
             Encrypt     = $false
             ContentMark = $false
             SubLabels   = @(
@@ -117,6 +130,7 @@
                     Name        = 'AllEmployees'
                     DisplayName = 'All Employees'
                     Tooltip     = 'Confidential data shared internally with all employees. No encryption is applied; the label is informational and adds a footer marking.'
+                    Color       = '#EAA300'
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
@@ -125,6 +139,7 @@
                     Name        = 'ConfidentialSpecificPeople'
                     DisplayName = 'Specific People'
                     Tooltip     = 'Confidential data shared with specific people inside or outside the organization. No encryption is applied; the label is informational and adds a footer marking.'
+                    Color       = '#EAA300'
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
@@ -133,6 +148,7 @@
                     Name        = 'ConfidentialInternalException'
                     DisplayName = 'Internal Exception'
                     Tooltip     = 'Confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). No encryption is applied; the label is informational and adds a footer marking.'
+                    Color       = '#EAA300'
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
@@ -143,6 +159,7 @@
             Name        = 'HighlyConfidential'
             DisplayName = 'Highly Confidential'
             Tooltip     = 'Very sensitive business data that would cause damage to the business if it was shared with unauthorized people. Examples include employee and customer information, passwords, source code, and pre-announced financial reports.'
+            Color       = '#A4262C'
             Encrypt     = $false
             ContentMark = $true
             WatermarkText = 'HIGHLY CONFIDENTIAL'
@@ -151,6 +168,7 @@
                     Name        = 'HCAllEmps'
                     DisplayName = 'All Employees'
                     Tooltip     = 'Highly confidential data that allows all employees view, edit, and reply permissions to this content. Data owners can track and revoke content.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'Template'
                     ContentMark = $true
@@ -160,6 +178,7 @@
                     Name        = 'HCSpecificPeople'
                     DisplayName = 'Specific People'
                     Tooltip     = 'Highly confidential data that requires protection and can be viewed only by people you specify and with the permission level you choose.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'UserDefined'
                     UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
@@ -170,6 +189,7 @@
                     Name        = 'HCInternalException'
                     DisplayName = 'Internal Exception'
                     Tooltip     = 'Highly confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). Encrypts content with all-employees rights so it cannot leave the tenant.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'Template'
                     ContentMark = $true

@@ -448,6 +448,62 @@ function Get-LabelByName {
     return $null
 }
 
+# Read a single advanced-setting key (e.g. 'color') off a live Get-Label
+# object. IPPS surfaces these as a `Settings` collection whose ToString()
+# renders each entry as `[key, value]` (e.g. `[color, #13A10E]`). Parsing
+# the rendered form is the most reliable approach because the underlying
+# CLR type is not stable across cmdlet versions. Returns $null when the
+# label, the collection, or the key is missing.
+function Get-LabelAdvancedSetting {
+    param(
+        $Label,
+        [Parameter(Mandatory)] [string] $Key
+    )
+    if (-not $Label) { return $null }
+    $needle = $Key.Trim().ToLowerInvariant()
+    foreach ($propName in @('Settings','AdvancedSettings','LocaleSettings')) {
+        $prop = $Label.PSObject.Properties[$propName]
+        if (-not $prop) { continue }
+        $coll = $prop.Value
+        if (-not $coll) { continue }
+        # Try structured access first (Key/Value or Name/Value or dictionary)
+        # before falling back to regex on the rendered '[key, value]' form. The
+        # IPPS module version sometimes returns typed Setting objects, and a
+        # mismatch in ToString() rendering would otherwise cause repeat false
+        # drift detections on every run.
+        if ($coll -is [System.Collections.IDictionary]) {
+            foreach ($k in $coll.Keys) {
+                if (([string]$k).Trim().ToLowerInvariant() -eq $needle) {
+                    return [string]$coll[$k]
+                }
+            }
+            continue
+        }
+        foreach ($item in @($coll)) {
+            if ($null -eq $item) { continue }
+            $keyProp = $null
+            foreach ($kp in 'Key','Name') {
+                $p = $item.PSObject.Properties[$kp]
+                if ($p) { $keyProp = $p; break }
+            }
+            $valProp = $item.PSObject.Properties['Value']
+            if ($keyProp -and $valProp) {
+                if (([string]$keyProp.Value).Trim().ToLowerInvariant() -eq $needle) {
+                    return [string]$valProp.Value
+                }
+                continue
+            }
+            $s = [string]$item
+            if ($s -match '^\s*\[\s*([^,\]]+?)\s*,\s*(.*?)\s*\]\s*$') {
+                if ($matches[1].Trim().ToLowerInvariant() -eq $needle) {
+                    return $matches[2].Trim()
+                }
+            }
+        }
+    }
+    return $null
+}
+
 # Resolve a configured parent label to its live Purview object. Prefers the
 # Pass 1 cache ($script:createdParents) because that object came directly from
 # Get-Label -Identity in New-OrUpdate-Label and is authoritative even for
@@ -807,6 +863,9 @@ function New-OrUpdate-Label {
             Comment     = $comment
         }
         if ($ParentId) { $newArgs['ParentId'] = $ParentId }
+        if (-not [string]::IsNullOrWhiteSpace([string]$LabelDef.Color)) {
+            $newArgs['AdvancedSettings'] = @{ color = [string]$LabelDef.Color }
+        }
 
         # IPPS cmdlets bypass -ErrorAction Stop. Capture errors via -ErrorVariable.
         # PR4: wrap with Invoke-WithTransientRetry so 502/503/504/429 auto-retry.
@@ -918,6 +977,56 @@ function New-OrUpdate-Label {
         }
     }
 
+    # Color drift correction for pre-existing labels we just adopted or
+    # already manage. New labels (-justCreated) already had the colour
+    # applied via New-Label -AdvancedSettings so we skip the round-trip.
+    # AdvancedSettings is merge-not-replace on the IPPS side, so this only
+    # touches the `color` key and leaves any other advanced settings alone.
+    if (-not $justCreated -and $existing -and ($owned -or $AdoptExisting) `
+        -and -not [string]::IsNullOrWhiteSpace([string]$LabelDef.Color)) {
+        $configColor = ([string]$LabelDef.Color).Trim()
+        # Wrap the drift-read in transient retry so a 502/503/504/429 hiccup
+        # cannot masquerade as 'missing colour' and trigger an unnecessary
+        # Set-Label round-trip on the next pass. On hard failure, fall back
+        # to the already-cached $existing object before assuming drift.
+        $live = $null
+        try {
+            Invoke-WithTransientRetry -Description ("Get-Label colour read '$idForOps'") -Action {
+                $script:__colorReadResult = Get-Label -Identity $idForOps -ErrorAction Stop
+            }
+            $live = $script:__colorReadResult
+        } catch {
+            $live = $existing
+        } finally {
+            Remove-Variable -Scope script -Name '__colorReadResult' -ErrorAction SilentlyContinue
+        }
+        $currentColor = Get-LabelAdvancedSetting -Label $live -Key 'color'
+        $needsUpdate = (-not $currentColor) -or
+            ($currentColor.ToLowerInvariant() -ne $configColor.ToLowerInvariant())
+        if ($needsUpdate) {
+            if ($PSCmdlet.ShouldProcess($idForOps, "Set-Label color $configColor")) {
+                try {
+                    Invoke-WithTransientRetry -Description ("Set-Label color '$idForOps'") -Action {
+                        Set-Label -Identity $idForOps `
+                            -AdvancedSettings @{ color = $configColor } `
+                            -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                    }
+                    $detail = if ($currentColor) {
+                        "Updated label '$($LabelDef.DisplayName)' colour from $currentColor to $configColor."
+                    } else {
+                        "Set label '$($LabelDef.DisplayName)' colour to $configColor."
+                    }
+                    Write-Host "    ~ $detail" -ForegroundColor Yellow
+                    Add-RunLogEntry -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $detail
+                } catch {
+                    $msg = Format-IPPSError $_
+                    Write-Warning "    Failed to update colour for label '$($LabelDef.DisplayName)': $msg"
+                    Add-RunLogEntry -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $msg
+                }
+            }
+        }
+    }
+
     # Encryption (newly created OR managed OR -AdoptExisting)
     if ($LabelDef.Encrypt -and $existing -and ($justCreated -or $owned -or $AdoptExisting)) {
         $protType = if ($LabelDef.ProtectionType) { $LabelDef.ProtectionType } else { 'Template' }
@@ -962,11 +1071,17 @@ function New-OrUpdate-Label {
 }
 
 # ---------------------------------------------------------------------------
-# Pass 0 — upfront name-length validation
+# Pass 0 — upfront validation (name length + colour hex)
 #
 # Purview enforces a 64-character maximum on label, sub-label, and label-policy
 # names. The IPPS backend rejects longer names with an empty/cryptic error, so
 # we validate upfront to give partners a clear, actionable diagnostic.
+#
+# Label colours are passed through to `New-Label/Set-Label -AdvancedSettings
+# @{color=...}` and must be valid 6-digit hex triplets (`#RRGGBB`). Anything
+# else (3-digit shorthand, named colours, missing `#`) is rejected upfront
+# because the backend silently drops malformed values and the colour silently
+# fails to appear.
 # ---------------------------------------------------------------------------
 foreach ($lbl in $Config.Labels) {
     if ($lbl.Name.Length -gt 64) {
@@ -975,6 +1090,12 @@ foreach ($lbl in $Config.Labels) {
     if ($lbl.DisplayName -and $lbl.DisplayName.Length -gt 64) {
         throw "Sensitivity label DisplayName '$($lbl.DisplayName)' is $($lbl.DisplayName.Length) characters; Microsoft Purview enforces a 64-character maximum. Edit PurviewConfig.psd1 and shorten the Labels.DisplayName field."
     }
+    if ($lbl.PSObject.Properties.Match('Color').Count -gt 0 -or ($lbl -is [hashtable] -and $lbl.ContainsKey('Color'))) {
+        $c = [string]$lbl.Color
+        if (-not [string]::IsNullOrWhiteSpace($c) -and $c -notmatch '^#[0-9A-Fa-f]{6}$') {
+            throw "Sensitivity label '$($lbl.Name)' has invalid Color '$c'; must be a 6-digit hex triplet like '#13A10E'. Edit PurviewConfig.psd1."
+        }
+    }
     foreach ($sub in @($lbl.SubLabels)) {
         if (-not $sub) { continue }
         if ($sub.Name.Length -gt 64) {
@@ -982,6 +1103,12 @@ foreach ($lbl in $Config.Labels) {
         }
         if ($sub.DisplayName -and $sub.DisplayName.Length -gt 64) {
             throw "Sub-label DisplayName '$($sub.DisplayName)' is $($sub.DisplayName.Length) characters; Microsoft Purview enforces a 64-character maximum. Edit PurviewConfig.psd1."
+        }
+        if ($sub.PSObject.Properties.Match('Color').Count -gt 0 -or ($sub -is [hashtable] -and $sub.ContainsKey('Color'))) {
+            $sc = [string]$sub.Color
+            if (-not [string]::IsNullOrWhiteSpace($sc) -and $sc -notmatch '^#[0-9A-Fa-f]{6}$') {
+                throw "Sub-label '$($sub.Name)' (under parent '$($lbl.Name)') has invalid Color '$sc'; must be a 6-digit hex triplet like '#EAA300'. Edit PurviewConfig.psd1."
+            }
         }
     }
 }
