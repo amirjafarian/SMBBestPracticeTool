@@ -191,6 +191,180 @@ When you see more prompts than expected, run
 deploy — every prompt is preceded by a structured log entry that names
 which check failed and what was expected vs observed.
 
+### MSAL DLL mismatch (Connect-MgGraph 'Method not found')
+
+`ExchangeOnlineManagement` and `Microsoft.Graph.Authentication` each ship
+their own copy of `Microsoft.Identity.Client.dll` (MSAL) under their module
+folders. When both modules are imported into the same PowerShell process,
+the CLR binds to whichever copy was loaded FIRST and ignores the other.
+
+If the two modules were compiled against different MSAL versions and a
+method signature changed between them (a recurring source of breakage in
+MSAL 4.x — e.g. `BaseAbstractApplicationBuilder<T>.WithLogging(IIdentity
+Logger, Boolean)` moved between 4.82 and 4.83), `Connect-MgGraph` throws:
+
+```text
+InteractiveBrowserCredential authentication failed:
+Method not found: '!0 Microsoft.Identity.Client.<X>.<Method>(...)'.
+```
+
+That message reads like an auth failure but is purely a DLL-binding
+mismatch — no credential / scope / tenant change will fix it.
+
+**Detection.** The connect helper runs `Test-MsalDllCompatibility` at
+start-up: it locates the `Microsoft.Identity.Client.dll` bundled by each
+module (PS edition-aware: `netCore` / `Dependencies\Core` on PS 7,
+`netFramework` / `Dependencies\Desktop` on PS 5.1), reads each DLL's
+`FileVersion`, and also checks whether MSAL is already loaded in the
+process. The outcome is logged as a `SessionGuard:Startup` entry with
+`reason=msal-aligned` or `msal-mismatch` plus the DLL paths/versions.
+
+**Mitigation 1: Graph-first connect order.** The connect helper imports
+`Microsoft.Graph.Authentication` and calls `Connect-MgGraph` **before**
+`Connect-ExchangeOnline`, mirroring the pattern used by
+[`microsoft/zerotrustassessment`](https://github.com/microsoft/zerotrustassessment/blob/main/src/powershell/public/Connect-ZtAssessment.ps1).
+When Microsoft Graph loads its bundled MSAL into the AppDomain first,
+`Connect-MgGraph` no longer throws `Method not found`. Verified
+end-to-end on EXO 3.10.0 + Microsoft.Graph.Authentication 2.37.0 (which
+ship MSAL 4.83.1.0 and 4.82.1.0 respectively).
+
+**Mitigation 2: `-DisableWAM` for Exchange Online / IPPS.** Connecting
+Graph first solves the `Connect-MgGraph` failure but introduces a new
+problem: when `Connect-ExchangeOnline` runs against Graph's older
+MSAL 4.82, EXO 3.10's WAM (Windows Account Manager) broker code path
+throws:
+
+```text
+System.NullReferenceException: Object reference not set to an instance of an object.
+   at Microsoft.Identity.Client.Platforms.Features.RuntimeBroker.RuntimeBroker..ctor(...)
+```
+
+EXO's WAM `RuntimeBroker` constructor expects MSAL 4.83's surface, and
+the older MSAL doesn't satisfy it. When the helper's pre-flight check
+detects a mismatch (`SessionGuard:Startup reason=msal-mismatch`), it
+automatically passes `-DisableWAM` to both `Connect-ExchangeOnline` and
+`Connect-IPPSSession`. WAM is bypassed in favour of the standard
+interactive browser flow, which doesn't invoke `RuntimeBroker`. The
+operator still gets a one-click browser sign-in via the system default
+browser; only the WAM 1-click pop-up is suppressed. Logged as
+`SessionGuard:EXO/IPPS reason=disable-wam-msal-mismatch`. Auto-disables
+the moment the bundled MSAL versions realign (WAM returns automatically).
+
+> **What about `-UseDeviceCode` for Graph?** Doesn't help — Graph 2.37's
+> `DeviceCodeCredential` and `InteractiveBrowserCredential` constructors
+> both invoke the same broken MSAL method overload, so switching auth
+> flow doesn't change the JIT lookup. `microsoft/zerotrustassessment`
+> has the same `#TODO: UseDeviceCode does not work with ExchangeOnline`
+> caveat for the EXO side.
+
+> **What about pre-loading Graph's older MSAL?** Doesn't work either.
+> `ExchangeOnlineManagement` 3.10's module manifest strong-binds to its
+> bundled MSAL 4.83.1.0, so pre-loading Graph's 4.82.1.0 with
+> `[Reflection.Assembly]::LoadFrom` causes `Connect-ExchangeOnline` to
+> throw `FileLoadException: manifest does not match` (HRESULT
+> 0x80131040).
+
+**Manual fallback — restart PowerShell.** If another module loaded MSAL
+into the process *before* this script started running (e.g. you ran
+`Connect-ExchangeOnline` manually, or imported `Az.*`, `PnP.PowerShell`,
+or `Microsoft.Graph.*` first), neither mitigation can help — .NET
+cannot swap a loaded assembly. The connect helper detects this in its
+pre-flight check (`loadedMsalVersion` is set in the
+`SessionGuard:Startup` entry) and tells the operator to:
+
+1. **Close** the PowerShell window.
+2. **Open a fresh `pwsh`** with no other Microsoft modules pre-imported.
+3. **Re-run** the script.
+
+If `Connect-MgGraph` still throws `Method not found: 'Microsoft.Identity…'`,
+the helper catches the `MissingMethodException` and emits restart-pwsh
+guidance with `SessionGuard:Graph reason=msal-method-not-found-restart-pwsh`.
+Same for an EXO `NullReferenceException` in `RuntimeBroker` —
+`SessionGuard:EXO reason=wam-runtimebroker-nullref`.
+
+**Last resort — pin a matching EXO/Graph pair.** Microsoft realigns the
+bundled MSAL versions between releases, so updating both modules with
+`Update-Module ExchangeOnlineManagement -Force; Update-Module Microsoft.Graph.Authentication -Force`
+will eventually close the gap. At the time of writing, no shipped
+`ExchangeOnlineManagement` version on PSGallery bundles the same MSAL
+as `Microsoft.Graph.Authentication` 2.37.0 (`4.82.1.0`) — EXO
+3.8/3.9.0/3.9.2/3.10 ship 4.66.1/4.68.0/4.74.1/4.83.1 respectively — so
+this fallback is rarely useful today. If you do want to try pinning a
+matching pair manually:
+
+```powershell
+# Find an installed EXO version whose MSAL DLL matches Graph's
+Get-Module ExchangeOnlineManagement -ListAvailable | ForEach-Object {
+    $dll = Get-ChildItem $_.ModuleBase -Filter Microsoft.Identity.Client.dll -Recurse |
+           Where-Object FullName -match 'netCore' | Select-Object -First 1
+    [pscustomobject]@{
+        EXO  = $_.Version
+        MSAL = if ($dll) { $dll.VersionInfo.FileVersion } else { '(none)' }
+    }
+}
+
+# Then pin in a fresh window before running the script:
+Import-Module ExchangeOnlineManagement -RequiredVersion <picked> -Force
+```
+
+The Graph-first connect order + auto `-DisableWAM` for EXO/IPPS is the
+primary fix; the pwsh-restart is the only reliable manual fallback when
+MSAL is already loaded with the wrong version.
+
+### Microsoft.Graph.Beta sub-module version pin (`Assembly with same name is already loaded`)
+
+After updating `Microsoft.Graph.Authentication` (e.g. to fix the MSAL
+mismatch above) the deployment can later fail at **step [5/5] container
+labels** with:
+
+```
+The 'Get-MgBetaDirectorySetting' command was found in the module
+'Microsoft.Graph.Beta.Identity.DirectoryManagement', but the module could
+not be loaded due to the following error: [Could not load file or
+assembly 'Microsoft.Graph.Authentication, Version=2.36.1.0, …'.
+Assembly with same name is already loaded]
+```
+
+**Why it happens.** Every `Microsoft.Graph.Beta.*` sub-module's manifest
+strict-pins `Microsoft.Graph.Authentication` to an **exact** version in
+`RequiredModules` (not a minimum). When you update `Authentication` to a
+newer version without also updating the matching Beta sub-modules,
+PowerShell tries to load the older Auth version that Beta requires, but
+the newer Auth is already in the AppDomain — only one version of an
+assembly can be loaded per AppDomain, so `Import-Module` throws.
+
+**Auto-detect + self-heal.** The connect helper runs `Test-GraphBetaCompat`
+in the pre-flight (just before importing the Beta sub-module). It
+compares the Beta module's `RequiredModules` pin against the loaded /
+installed `Microsoft.Graph.Authentication` version and:
+
+* When the pin matches: logs `SessionGuard:GraphBeta version-pin-aligned`
+  and force-imports the matching version via `Import-Module
+  -RequiredVersion` (so the pick is deterministic even with multiple
+  Beta versions installed side-by-side).
+* When the pin **does not** match: **unconditionally** installs the
+  matching Beta version side-by-side
+  (`Install-Module … -RequiredVersion <auth> -Scope CurrentUser -Force
+  -AllowClobber`), re-validates, then force-imports it. No
+  `-AutoInstallModules` flag is required — this is a deterministic,
+  non-destructive recovery (one specific sub-module version, installed
+  side-by-side; existing versions are untouched). Matches the existing
+  PSGallery trust restore pattern.
+* If `Install-Module` fails (PSGallery unreachable, locked-down
+  environment, etc.): fails fast at pre-flight with the exact
+  `Install-Module` command to run manually. Operators in CLM /
+  no-internet environments can pre-pin the matching Beta version before
+  running the script.
+
+Log keys: `version-pin-aligned`, `version-pin-mismatch`,
+`auto-installed-matching-version`, `auto-install-failed`,
+`imported-matching-version`, `no-matching-version-installed`.
+
+**Manual fix.** If you don't want the auto-install, run
+`Update-Module Microsoft.Graph.Beta -Force` (updates the whole family in
+one shot) or the targeted `Install-Module` printed in the warning, then
+re-run the deploy.
+
 ---
 
 ## File layout
