@@ -295,10 +295,17 @@
     SMB-friendly profile that minimises breakage with third-party tooling.</p>
 
   <p style="margin-top:6px;color:var(--muted);font-size:13px">
-    The <strong>Applies to</strong> line under each label reflects the scope the script sets. All
-    labels start at <em>Files &middot; Emails</em>; you can widen any label later in the Purview portal
-    (e.g. add <em>Groups &amp; sites</em> for Teams / SharePoint / M365 Groups) without losing
-    the deployment baseline.
+    The <strong>Applies to</strong> line under each label reflects the scope the script sets.
+    The three <em>published</em> labels (<strong>General</strong>,
+    <strong>Confidential &mdash; All Employees</strong>,
+    <strong>Highly Confidential &mdash; All Employees</strong>) ship with
+    <em>Files &middot; Emails &middot; Groups &amp; sites</em> so they appear in the
+    Sensitivity picker when a user creates a new Team, M365 Group or SharePoint site;
+    every other label starts at <em>Files &middot; Emails</em> only. Pass
+    <code>-SkipContainerLabels</code> to drop the <em>Groups &amp; sites</em> bits
+    (labels still ship with Files &amp; Emails). You can widen any label later in the
+    Purview portal without losing the deployment baseline &mdash; adoption uses
+    UNION-not-replace, so any scope you add by hand is preserved on the next re-run.
   </p>
 
   <p style="margin-top:6px;color:var(--muted);font-size:13px">
@@ -332,11 +339,11 @@
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
-          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip"><span class="ico">&#128101;</span>Groups &amp; sites</span>
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span><span class="tag brand">Email default</span></div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span><span class="tag brand">Email default</span><span class="tag brand">Published</span></div>
     </div>
 
     <div class="label-row">
@@ -359,11 +366,11 @@
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
-          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip"><span class="ico">&#128101;</span>Groups &amp; sites</span>
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span><span class="tag brand">Document default</span></div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span><span class="tag brand">Document default</span><span class="tag brand">Published</span></div>
     </div>
     <div class="label-row child">
       <div class="pri">5</div>
@@ -412,11 +419,11 @@
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
-          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip"><span class="ico">&#128101;</span>Groups &amp; sites</span>
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span></div>
+      <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span><span class="tag brand">Published</span></div>
     </div>
     <div class="label-row child">
       <div class="pri">9</div>

@@ -38,7 +38,7 @@ customer; you can shorten subsequent ones with experience.
 * `-BPOnly` — yes/no
 * `-SkipAIControls` — yes/no (AI governance is default-on for E5 / Purview Suite; only set this if the customer has a specific reason to opt out)
 * `-ApplyRetention` — yes/no (**opt-in** — only enable if the customer has consciously chosen a retention duration appropriate for their vertical)
-* `-SkipContainerLabels` — yes/no (default behaviour is to enable; only set this if container labels are managed by another process or the tenant lacks Entra ID P1)
+* `-SkipContainerLabels` — yes/no (default behaviour is to enable; only set this if container labels are managed by another process or the tenant lacks Entra ID P1). Strips both the tenant-side `Group.Unified EnableMIPLabels = True` toggle AND the container-scope bits (`Site`, `UnifiedGroup`) on the 3 published labels' `ContentType`. The labels still ship with `File, Email` scope.
 * `-EnablePremiumAudit` + which mailbox(es) — yes/no
 * `-EnableLabelCoAuthoring` — yes/no (**opt-in, one-way change** — only enable after confirming the customer has no third-party apps, scanners, scripts or services that read sensitivity-label metadata from the old custom-properties location. AIP scanner < v3.0, OneDrive sync < 19.002, MIP SDK < 1.7, custom DLP scanners and custom Exchange mail-flow rules all break if they read from the old location. Disabling later is PowerShell-only and loses labels on unencrypted Office files. Ref: [`sensitivity-labels-coauthoring`](https://learn.microsoft.com/purview/sensitivity-labels-coauthoring))
 * Retention duration (only relevant if `-ApplyRetention` is enabled) — **stick with default 7 years only if the customer has explicitly agreed** (otherwise edit `Retention.DurationDays` in `PurviewConfig.psd1`)
@@ -192,9 +192,19 @@ Microsoft does not officially support flipping it back to `False`. You
 can apply labels to Groups / Teams / SPO sites freely from then on, but
 the *capability* is permanent.
 
+In addition, the 3 **published** labels (`General`,
+`Confidential\All Employees`, `Highly Confidential\All Employees`)
+ship with container scope (`Site`, `UnifiedGroup`) in their
+`ContentType` so they are selectable when a user creates a new Team
+or M365 Group. The toolkit's adoption path uses UNION-not-replace:
+any container-scope bits a customer has previously added in the portal
+are preserved, and re-running the deploy is a no-op when the live set
+already covers the desired set.
+
 **Mitigation.** Treat the default-on behaviour as *decision-grade* —
 confirm with the customer before the first run. Pass
-`-SkipContainerLabels` to opt out. License auto-detect skips it
+`-SkipContainerLabels` to opt out (this strips both the tenant toggle
+AND the per-label container bits). License auto-detect skips it
 automatically on tenants where no recognised M365 BP/E5/Purview Suite
 SKU is found (e.g. an E3-only tenant without Entra ID P1).
 

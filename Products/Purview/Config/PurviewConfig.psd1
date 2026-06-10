@@ -114,6 +114,31 @@
             Color       = '#3A96DD'
             Encrypt     = $false
             ContentMark = $false
+            # Optional. Comma-separated `New-Label -ContentType` values.
+            # 'File, Email' (the IPPS default) is implied when omitted; we
+            # set it explicitly here only to add the container-scope bits
+            # ('Site' + 'UnifiedGroup') so this label is selectable in the
+            # Purview portal's Edit sensitivity label -> Scope page for
+            # Microsoft 365 Groups, Teams, and SharePoint sites. Without
+            # these bits a user creating a new Team cannot pick this label.
+            #
+            # The toolkit applies UNION-not-replace semantics on adoption:
+            # any extra scope a customer has manually added in the portal
+            # is preserved. Re-running the deploy is a no-op for this field
+            # when the live set already covers the desired set.
+            #
+            # Only the 3 PUBLISHED labels (this + Confidential\AllEmployees +
+            # HighlyConfidential\HCAllEmps — see LabelPolicy.PublishedLabels)
+            # carry container scope. The other labels stay File/Email-only
+            # because Microsoft Purview does not allow encrypted labels on
+            # containers and the unpublished parent/`Specific People`/
+            # `Internal Exception` labels are not in the user-visible picker.
+            #
+            # When -SkipContainerLabels is set on Deploy-PurviewBestPractice
+            # (or auto-detect cannot identify a BP / E5 / Purview Suite SKU),
+            # the 'Site' + 'UnifiedGroup' bits are stripped at deploy time
+            # and a one-line info message is logged per label.
+            ContentType = 'File, Email, Site, UnifiedGroup'
         }
         @{
             Name        = 'Confidential'
@@ -133,6 +158,13 @@
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
+                    # Published label — see ContentType notes on the General
+                    # label above. Adds container scope so this label appears
+                    # in the Purview Edit sensitivity label -> Scope page for
+                    # M365 Groups, Teams, and SharePoint sites. Required for
+                    # the SMB recommended pattern where every new Team is
+                    # classified at creation time.
+                    ContentType = 'File, Email, Site, UnifiedGroup'
                 }
                 @{
                     Name        = 'ConfidentialSpecificPeople'
@@ -193,6 +225,18 @@
                     EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,OBJMODEL,REPLY,REPLYALL,FORWARD'
                     ContentMark = $true
                     FooterText  = 'Classified as Highly Confidential'
+                    # Published label — see ContentType notes on the General
+                    # label above. Adds container scope so this label appears
+                    # in the Purview Edit sensitivity label -> Scope page for
+                    # M365 Groups, Teams, and SharePoint sites.
+                    #
+                    # NOTE: Microsoft Purview will not apply the encryption
+                    # protection (Template / Co-Author rights) to the CONTAINER
+                    # itself — encryption stays on files and emails. The
+                    # container-scope bits drive the privacy / sharing /
+                    # unmanaged-device behaviour of the Team / site, not its
+                    # contents' RMS encryption.
+                    ContentType = 'File, Email, Site, UnifiedGroup'
                 }
                 @{
                     Name        = 'HCSpecificPeople'

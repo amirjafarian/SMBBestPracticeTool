@@ -83,6 +83,22 @@
     error — fall-back to broad `AuthenticatedUsers` would silently
     reintroduce the exact scope this token was added to remove.
 
+.PARAMETER SkipContainerLabels
+    When set, strip the container-scope bits (`Site`, `UnifiedGroup`) from
+    each label's `ContentType` before calling `New-Label` / `Set-Label`.
+    The labels still get the `File, Email` scope. Used by the driver
+    script when license auto-detect cannot identify a Microsoft 365 BP
+    / E5 / Purview Suite SKU, OR when the operator passes
+    `-SkipContainerLabels` to `Deploy-PurviewBestPractice.ps1` to opt out.
+
+    Rationale: container scope (Groups & sites) requires the tenant-side
+    `Group.Unified EnableMIPLabels = $true` toggle, which is set by
+    `Setup-TenantSettings.ps1` step [5/5]. When that step is skipped, the
+    label's container bits would have no effect — so we drop them here too
+    and log a one-line info message per affected label. This keeps the
+    Purview portal `Edit sensitivity label -> Scope` page honest about
+    what the toolkit actually provisioned.
+
 .NOTES
     Label and policy changes can take up to 24 hours to fully propagate to
     all users and clients.
@@ -99,7 +115,10 @@ param(
     # Get-ActualTenantIdentity AND a plain hashtable from a partner-driver
     # wrapper. Property access via `.DefaultDomain` etc. works for both.
     [Parameter()]
-    [object] $TenantIdentity
+    [object] $TenantIdentity,
+
+    [Parameter()]
+    [switch] $SkipContainerLabels
 )
 
 $ErrorActionPreference = 'Stop'
@@ -907,6 +926,92 @@ function Set-LabelContentMarking {
     }
 }
 
+# ---------------------------------------------------------------------------
+# ContentType (label scope) helpers — issue #24.
+#
+# `ContentType` is the IPPS `New-Label -ContentType` value: a comma-separated
+# string from the set {File, Email, Site, UnifiedGroup, PurviewAssets,
+# SchematizedDataAssets}. Three published labels (General, AllEmployees,
+# HCAllEmps) ship with container scope ('Site, UnifiedGroup') so they appear
+# in the Purview portal's container-label picker; the rest stay File/Email-only.
+#
+# Helpers below normalise the comma string to a canonical SORTED-UNIQUE array
+# so we can:
+#   * compare config vs live without false drift from whitespace / ordering;
+#   * UNION live + desired on adoption so we never strip a manually-added
+#     scope (per issue #24 AC3 + AC6);
+#   * strip the container bits when -SkipContainerLabels is set without
+#     mutating the rest of the desired scope.
+# ---------------------------------------------------------------------------
+$script:ContainerContentTypeBits = @('Site', 'UnifiedGroup')
+
+function ConvertTo-ContentTypeSet {
+    [OutputType([string[]])]
+    param([string] $Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
+    return @(
+        $Value -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object   { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Compare-ContentTypeSets {
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $A,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $B
+    )
+    if ($A.Count -ne $B.Count) { return $false }
+    for ($i = 0; $i -lt $A.Count; $i++) {
+        if ($A[$i] -ne $B[$i]) { return $false }
+    }
+    return $true
+}
+
+function Get-DesiredContentTypeSet {
+    <#
+        Resolve the desired ContentType set for a label, after the
+        -SkipContainerLabels gate. Returns:
+          * $null  if the config did not specify a ContentType (caller
+                   should leave the IPPS default in place);
+          * @()    if every desired bit was stripped (caller still skips
+                   the Set-Label so the IPPS default kicks in);
+          * sorted-unique string[]  otherwise.
+        Emits a one-line info message + Skipped run-log entry per label
+        when container bits are stripped (issue #24 AC4).
+    #>
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)] [hashtable] $LabelDef,
+        [Parameter(Mandatory)] [bool]      $SkipContainerLabels
+    )
+    if (-not $LabelDef.ContainsKey('ContentType') -or
+        [string]::IsNullOrWhiteSpace([string]$LabelDef.ContentType)) {
+        return $null
+    }
+    $configured = ConvertTo-ContentTypeSet -Value ([string]$LabelDef.ContentType)
+    if (-not $SkipContainerLabels) { return $configured }
+
+    $stripped = @($configured | Where-Object { $_ -notin $script:ContainerContentTypeBits })
+    $removed  = @($configured | Where-Object { $_ -in    $script:ContainerContentTypeBits })
+    if ($removed.Count -gt 0) {
+        Write-Host ("    [info] -SkipContainerLabels: stripped container scope bits ({0}) from label '{1}' ContentType (configured: {2}; will provision: {3}). Tenant-side Group.Unified EnableMIPLabels is not being set, so the container bits would have no effect." -f
+            ($removed -join ', '),
+            $LabelDef.DisplayName,
+            ($configured -join ', '),
+            $(if ($stripped.Count) { $stripped -join ', ' } else { '(none — IPPS default File, Email will apply)' })) -ForegroundColor DarkYellow
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve ContentType' `
+            -Target $LabelDef.DisplayName -Status 'Skipped' `
+            -Detail ("Container-scope bits ({0}) stripped from configured ContentType '{1}' because -SkipContainerLabels is set. Provisioning '{2}'." -f
+                ($removed -join ', '),
+                ($configured -join ', '),
+                $(if ($stripped.Count) { $stripped -join ', ' } else { '(IPPS default)' }))
+    }
+    return $stripped
+}
+
 function New-OrUpdate-Label {
     param(
         [Parameter(Mandatory)] [hashtable] $LabelDef,
@@ -978,6 +1083,15 @@ function New-OrUpdate-Label {
         if ($ParentId) { $newArgs['ParentId'] = $ParentId }
         if (-not [string]::IsNullOrWhiteSpace([string]$LabelDef.Color)) {
             $newArgs['AdvancedSettings'] = @{ color = [string]$LabelDef.Color }
+        }
+
+        # Issue #24 — pass -ContentType through to New-Label when configured.
+        # We never UNION here (the label doesn't exist yet, so there is no
+        # live value to preserve); UNION applies only on the adopt/update
+        # path below.
+        $desiredContentTypeNew = Get-DesiredContentTypeSet -LabelDef $LabelDef -SkipContainerLabels:$SkipContainerLabels.IsPresent
+        if ($null -ne $desiredContentTypeNew -and $desiredContentTypeNew.Count -gt 0) {
+            $newArgs['ContentType'] = ($desiredContentTypeNew -join ', ')
         }
 
         # IPPS cmdlets bypass -ErrorAction Stop. Capture errors via -ErrorVariable.
@@ -1140,6 +1254,67 @@ function New-OrUpdate-Label {
         }
     }
 
+    # ContentType drift correction (issue #24).
+    #
+    # Only runs on the adopt/update path — when a label is freshly created,
+    # New-Label above already applied the desired ContentType. For pre-
+    # existing labels we use UNION-not-replace: live ContentType UNION
+    # desired ContentType. This ensures:
+    #   * We never strip a scope a customer manually added in the portal
+    #     (issue #24 AC3 + AC6).
+    #   * Re-running the deploy is a no-op when the live set already
+    #     covers the desired set (sorted-set equality, no false 'Updated'
+    #     log lines per issue #24 AC3).
+    #
+    # The -SkipContainerLabels gate runs inside Get-DesiredContentTypeSet,
+    # so the UNION operand already has 'Site'/'UnifiedGroup' stripped when
+    # the operator opted out — but we still preserve any container bits
+    # the live label already has. We only ADD scope, never remove it.
+    if (-not $justCreated -and $existing -and ($owned -or $AdoptExisting)) {
+        $desiredCt = Get-DesiredContentTypeSet -LabelDef $LabelDef -SkipContainerLabels:$SkipContainerLabels.IsPresent
+        if ($null -ne $desiredCt -and $desiredCt.Count -gt 0) {
+            # Drift-read on a fresh Get-Label so we don't compare against a
+            # potentially-stale cached object (mirrors the colour block above).
+            $liveCt = $null
+            try {
+                Invoke-WithTransientRetry -Description ("Get-Label ContentType read '$idForOps'") -Action {
+                    $script:__ctReadResult = Get-Label -Identity $idForOps -ErrorAction Stop
+                }
+                $liveCt = $script:__ctReadResult
+            } catch {
+                $liveCt = $existing
+            } finally {
+                Remove-Variable -Scope script -Name '__ctReadResult' -ErrorAction SilentlyContinue
+            }
+            $liveSet  = ConvertTo-ContentTypeSet -Value ([string]$liveCt.ContentType)
+            $unionSet = @(@($liveSet + $desiredCt) | Sort-Object -Unique)
+            $isNoOp   = Compare-ContentTypeSets -A $liveSet -B $unionSet
+            if (-not $isNoOp) {
+                if ($PSCmdlet.ShouldProcess($idForOps, "Set-Label ContentType $($unionSet -join ', ')")) {
+                    try {
+                        Invoke-WithTransientRetry -Description ("Set-Label ContentType '$idForOps'") -Action {
+                            Set-Label -Identity $idForOps `
+                                -ContentType ($unionSet -join ', ') `
+                                -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                        }
+                        $added = @($unionSet | Where-Object { $_ -notin $liveSet })
+                        $detail = if ($liveSet.Count -eq 0) {
+                            "Set label '$($LabelDef.DisplayName)' ContentType to '$($unionSet -join ', ')'."
+                        } else {
+                            "Extended label '$($LabelDef.DisplayName)' ContentType from '$($liveSet -join ', ')' to '$($unionSet -join ', ')' (added: $($added -join ', ')). Live scope bits not in config were preserved (UNION-not-replace)."
+                        }
+                        Write-Host "    ~ $detail" -ForegroundColor Yellow
+                        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label ContentType' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $detail
+                    } catch {
+                        $msg = Format-IPPSError $_
+                        Write-Warning "    Failed to update ContentType for label '$($LabelDef.DisplayName)': $msg"
+                        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label ContentType' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $msg
+                    }
+                }
+            }
+        }
+    }
+
     # Encryption (newly created OR managed OR -AdoptExisting)
     if ($LabelDef.Encrypt -and $existing -and ($justCreated -or $owned -or $AdoptExisting)) {
         $protType = if ($LabelDef.ProtectionType) { $LabelDef.ProtectionType } else { 'Template' }
@@ -1256,6 +1431,46 @@ foreach ($lbl in $Config.Labels) {
 }
 if ($Config.LabelPolicy -and $Config.LabelPolicy.Name -and $Config.LabelPolicy.Name.Length -gt 64) {
     throw "Label policy name '$($Config.LabelPolicy.Name)' is $($Config.LabelPolicy.Name.Length) characters; Microsoft Purview enforces a 64-character maximum. Edit PurviewConfig.psd1 and shorten the LabelPolicy.Name field."
+}
+
+# ---------------------------------------------------------------------------
+# Pre-flight — container-scope sanity check (issue #24).
+#
+# When the operator passed -SkipContainerLabels (or license auto-detect did
+# so for them), Setup-TenantSettings.ps1 step [5/5] skips the
+# Group.Unified `EnableMIPLabels = $true` toggle. Without that tenant-side
+# toggle on, the 'Site' / 'UnifiedGroup' bits we'd otherwise stamp on
+# selected labels have no effect — Teams / Groups / SharePoint sites do
+# not surface the labels in their picker.
+#
+# We strip those bits per-label inside Get-DesiredContentTypeSet (logged at
+# Skipped status). The pre-flight below surfaces ONE roll-up info line so
+# the operator sees the trade-off upfront in the console, even when the
+# affected labels are deep in the config tree.
+# ---------------------------------------------------------------------------
+if ($SkipContainerLabels.IsPresent) {
+    $configuredContainerLabels = New-Object System.Collections.Generic.List[string]
+    foreach ($lbl in $Config.Labels) {
+        if ($lbl.ContainsKey('ContentType') -and
+            (ConvertTo-ContentTypeSet -Value ([string]$lbl.ContentType) | Where-Object { $_ -in $script:ContainerContentTypeBits })) {
+            [void]$configuredContainerLabels.Add($lbl.DisplayName)
+        }
+        if ($lbl.SubLabels) {
+            foreach ($s in $lbl.SubLabels) {
+                if ($s.ContainsKey('ContentType') -and
+                    (ConvertTo-ContentTypeSet -Value ([string]$s.ContentType) | Where-Object { $_ -in $script:ContainerContentTypeBits })) {
+                    [void]$configuredContainerLabels.Add("$($lbl.DisplayName)\$($s.DisplayName)")
+                }
+            }
+        }
+    }
+    if ($configuredContainerLabels.Count -gt 0) {
+        Write-Host ("[info] -SkipContainerLabels is set. Container-scope bits (Site, UnifiedGroup) will be stripped from these label(s): {0}. The labels will still be provisioned with the remaining scope (File, Email). Re-run without -SkipContainerLabels (and ensure Setup-TenantSettings.ps1 enables Group.Unified EnableMIPLabels) to make these labels selectable in Teams / Microsoft 365 Groups / SharePoint sites." -f ($configuredContainerLabels -join ', ')) -ForegroundColor DarkYellow
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Pre-flight ContentType' `
+            -Target '(container-scope summary)' -Status 'Info' `
+            -Detail ("-SkipContainerLabels is set; container-scope bits (Site, UnifiedGroup) will be stripped from {0} configured label(s): {1}." -f
+                $configuredContainerLabels.Count, ($configuredContainerLabels -join ', '))
+    }
 }
 
 # ---------------------------------------------------------------------------
