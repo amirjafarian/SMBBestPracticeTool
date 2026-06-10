@@ -55,7 +55,7 @@ Security Best Practice Deployment" guide for Business Premium.
 
 | Switch                     | What it does                                                                                       | Pre-requisite                                                          |
 |----------------------------|----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| `-EnableContainerLabels`   | Sets `Group.Unified` `EnableMIPLabels=True` so labels can apply to M365 Groups, Teams, SPO sites.  | `Microsoft.Graph.Beta.Identity.DirectoryManagement` module + Graph delegated scopes `Organization.Read.All` + `Directory.ReadWrite.All` |
+| `-SkipContainerLabels`     | Opt out of `Group.Unified` `EnableMIPLabels=True`. Container labels run by default (BP includes Entra ID P1, the AAD-side requirement). | None — opt-out only.                                                  |
 | `-EnablePremiumAudit`      | Adds `SearchQueryInitiated` to the supplied mailbox(es) `AuditOwner`.                              | Microsoft 365 Audit (**Premium**) licence                              |
 | `-AdoptExisting`           | Allows updating labels / policies that already exist but were not created by this toolkit.         | Audit existing config first.                                           |
 
@@ -76,14 +76,16 @@ baseline. Some optional features require a higher SKU:
 | DLP for SharePoint + OneDrive                             | Business Premium                      | Always on                              |
 | Retention policies (Exchange)                             | Business Premium                      | Always on                              |
 | Unified audit log (standard, 90-day retention)            | Business Premium                      | Always on                              |
-| Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Auto-on on Business Premium / E5 / Purview Suite (opt out with `-NoLicenseAutoDetect`); switch is `-EnableContainerLabels` |
+| Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Default on (BP includes Entra ID P1, the AAD-side requirement); opt out with `-SkipContainerLabels`. License auto-detect skips it automatically when no recognised BP/E5/Purview Suite SKU is found. |
 | Premium Audit (1-year retention, `SearchQueryInitiated`)  | E5 / Audit (Premium) add-on           | Opt-in via `-EnablePremiumAudit`       |
 | Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
 | DLP for Defender for Cloud Apps / on-prem / Power BI      | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
 
 **Pass `-BPOnly`** to hard-block any E5-only opt-ins. The script refuses to
-run if `-EnableContainerLabels` or `-EnablePremiumAudit` is also set, and
-the DLP module rejects custom config workloads that require E5.
+run if `-EnablePremiumAudit` is set, and the DLP module rejects custom
+config workloads that require E5. Container labels still run under
+`-BPOnly` because Business Premium includes Entra ID P1 (the AAD-side
+requirement) — pass `-SkipContainerLabels` if you need to opt out.
 
 ```powershell
 # Business Premium customer — strict mode
@@ -100,8 +102,9 @@ The signing-in admin needs:
   (sensitivity labels, DLP, retention)
 * **SharePoint Administrator** (tenant settings)
 * **Exchange Administrator** (audit log, mailbox audit)
-* **Groups Administrator** *or* **Global Administrator** — only if you use
-  `-EnableContainerLabels`
+* **Groups Administrator** *or* **Global Administrator** — required for
+  container labels (`Group.Unified` directory setting). Pass
+  `-SkipContainerLabels` to omit this role requirement.
 
 > Or sign in as **Global Administrator** for simplicity.
 
@@ -117,7 +120,7 @@ The signing-in admin needs:
 | `ExchangeOnlineManagement`                              | Always (EXO + IPPS)                     | `Install-Module ExchangeOnlineManagement -Scope CurrentUser`                          |
 | `Microsoft.Online.SharePoint.PowerShell`                | Tenant settings + label policy publish  | `Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser`            |
 | `Microsoft.Graph.Authentication`                        | Whenever Graph is used (license auto-detect, tenant-identity confirm, container labels) | `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`                    |
-| `Microsoft.Graph.Beta.Identity.DirectoryManagement`     | Only when `-EnableContainerLabels`      | `Install-Module Microsoft.Graph.Beta.Identity.DirectoryManagement -Scope CurrentUser` |
+| `Microsoft.Graph.Beta.Identity.DirectoryManagement`     | Container labels (default; skipped only when `-SkipContainerLabels` is passed) | `Install-Module Microsoft.Graph.Beta.Identity.DirectoryManagement -Scope CurrentUser` |
 
 ### Microsoft Graph delegated scopes (least-privilege)
 
@@ -126,8 +129,7 @@ The script requests only the scopes it actually needs for the run you ask for:
 | When Graph is used                                                | Scopes requested                                |
 |-------------------------------------------------------------------|-------------------------------------------------|
 | License auto-detect + tenant-identity confirm (always when Graph is connected) | `Organization.Read.All` *(read-only)* |
-| Container labels — `-EnableContainerLabels` passed explicitly     | `Organization.Read.All` + `Directory.ReadWrite.All` *(requested upfront in one consent)* |
-| Container labels — promoted by E5/Purview Suite auto-detect       | `Organization.Read.All` first, then `Directory.ReadWrite.All` added via a second `Connect-MgGraph` call *(no extra prompt if already consented)* |
+| Container labels (default; skipped only when `-SkipContainerLabels` is passed) | `Organization.Read.All` + `Directory.ReadWrite.All` *(requested upfront in one consent)* |
 
 `Directory.ReadWrite.All` is the historically-consented, known-working scope on most tenants for reading `/directorySettingTemplates` and writing `/settings` where `Group.Unified.EnableMIPLabels` lives. We did experiment with the narrower `GroupSettings.ReadWrite.All` but it triggered `403 Authorization_RequestDenied` on tenants whose admins had only ever consented to `Directory.ReadWrite.All`. The license auto-detect itself (`/subscribedSkus`, `/organization`) is read-only via `Organization.Read.All`.
 
@@ -430,12 +432,11 @@ auto-derivation fails (e.g. multi-geo or unusual domain configurations):
     -SkipTenantSettings
 ```
 
-### Container labels + premium audit
+### Premium audit (E5 add-on)
 
 ```powershell
 .\Deploy-PurviewBestPractice.ps1 `
     -TenantAdminUpn admin@contoso.onmicrosoft.com `
-    -EnableContainerLabels `
     -EnablePremiumAudit -PremiumAuditMailbox 'admin@contoso.onmicrosoft.com'
 ```
 
@@ -554,7 +555,7 @@ conversation. Full detail and mitigations are in
 | **Encrypted-label scope = your tenant only (not retroactive)** | The two Template-encrypted HC sub-labels grant rights to all users in your tenant via the `{TenantDomain}` token. | Files labelled BEFORE this toolkit ran (or before you tightened the scope) keep their old rights — re-label them if you need the new scope applied. B2B guests from OTHER tenants are excluded by default; if you need cross-tenant collaboration, switch to `{AuthenticatedUsers}` deliberately. |
 | **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
 | **`Confidential\Specific People` also prompts users** | UserDefined encryption — Outlook auto-applies Do Not Forward; Office desktop apps prompt the recipient list. | Same usability caveat as the HC variant. **Not** published by default. Encryption is enforced once published. |
-| **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set when `-EnableContainerLabels` is passed (or auto-detected on E5). | Microsoft does not officially support reverting. Treat the switch as decision-grade. |
+| **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set by default on every run (BP is the licensing floor and BP includes Entra ID P1). Pass `-SkipContainerLabels` to opt out before the first run. | Microsoft does not officially support reverting once set. Treat the default-on behaviour as decision-grade — confirm with the customer up front. |
 | **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
 | **7-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 7 years. | Aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC), but still wrong for some verticals (e.g. paediatric healthcare) and for customers who want no automatic deletion. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |
 | **DLP starts in simulation** | `DlpStartInSimulation = $true`. Telemetry only — nothing is blocked. | Has to be **explicitly promoted** at day 30 via the [`docs/DLP-Simulation-Exit-Runbook.md`](docs/DLP-Simulation-Exit-Runbook.md), or it is permanent shelfware. |

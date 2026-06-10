@@ -22,9 +22,12 @@
 .PARAMETER Config
     Hashtable from PurviewConfig.psd1.
 
-.PARAMETER EnableContainerLabels
-    Apply Group.Unified EnableMIPLabels=True for container (group/site) labels.
-    Requires Microsoft Graph (Beta) connection.
+.PARAMETER SkipContainerLabels
+    Opt out of Group.Unified EnableMIPLabels=True for container (group/site)
+    labels. By default the script applies the setting (the toolkit's
+    licensing floor is Microsoft 365 Business Premium, which includes
+    Entra ID P1 — the AAD-side requirement). The container-label step
+    requires a Microsoft Graph (Beta) connection.
 
 .PARAMETER EnablePremiumAudit
     Enable per-mailbox SearchQueryInitiated audit on the supplied mailbox(es).
@@ -40,7 +43,7 @@ param(
     [hashtable] $Config,
 
     [Parameter()]
-    [switch] $EnableContainerLabels,
+    [switch] $SkipContainerLabels,
 
     [Parameter()]
     [switch] $EnablePremiumAudit,
@@ -419,7 +422,7 @@ if ($settings.EnableLabelCoAuth) {
 # ---------------------------------------------------------------------------
 # 5a. (optional) Container labels — Group.Unified EnableMIPLabels
 # ---------------------------------------------------------------------------
-if ($EnableContainerLabels) {
+if (-not $SkipContainerLabels) {
     Write-Host "[5/5] Container labels (Group.Unified EnableMIPLabels)..." -ForegroundColor Cyan
 
     $existing = Get-MgBetaDirectorySetting -ErrorAction SilentlyContinue |
@@ -471,8 +474,8 @@ if ($EnableContainerLabels) {
     # so when container labels silently went missing from a BP run (e.g. after
     # a regression in the license auto-detect) the HTML/JSON report had no
     # evidence the step was even considered. Now every run records the skip.
-    Write-Host "[5/5] Container labels: skipped (-EnableContainerLabels not set)." -ForegroundColor DarkGray
-    Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Group.Unified EnableMIPLabels' -Target 'AAD directory setting' -Status 'Skipped' -Detail '-EnableContainerLabels not set; container labels for Teams / M365 Groups / SharePoint sites not enabled. Pass -EnableContainerLabels explicitly or run on an E5 / Purview Suite / Business Premium tenant to auto-enable.'
+    Write-Host "[5/5] Container labels: skipped (-SkipContainerLabels was set, or license auto-detect found no recognised M365 BP/E5/Purview Suite SKU)." -ForegroundColor DarkGray
+    Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Group.Unified EnableMIPLabels' -Target 'AAD directory setting' -Status 'Skipped' -Detail '-SkipContainerLabels was set, or license auto-detect classified the tenant as ''Other'' (no recognised M365 BP/E5/Purview Suite SKU); container labels for Teams / M365 Groups / SharePoint sites not enabled. Re-run without -SkipContainerLabels on a Business Premium (or higher) tenant to enable.'
 }
 
 # ---------------------------------------------------------------------------
