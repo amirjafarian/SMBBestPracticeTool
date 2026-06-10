@@ -47,7 +47,7 @@ Security Best Practice Deployment" guide for Business Premium.
 | # | Task                | Default state                                                                                                        |
 |---|---------------------|----------------------------------------------------------------------------------------------------------------------|
 | 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling                             |
-| 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Reviewer rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
+| 2 | **Sensitivity labels** | Creates `Public`, `General`, `Confidential` (parent + 3 sub-labels), `Highly Confidential` (parent + 3 sub-labels). Encryption: `Highly Confidential\All Employees` uses Co-Author rights, `Highly Confidential\Internal Exception` + `Confidential\Specific People` + `Highly Confidential\Specific People` use Reviewer / UserDefined; all rights scoped to your tenant only via `{TenantDomain}`. Labels ordered, then published with `General` as the email default. |
 | 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
 | 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
@@ -312,20 +312,35 @@ The most common customisations:
 
 ## Encryption rights — tenant-scoped by default
 
-The encrypting labels (`Highly Confidential \ All Employees`, `Highly
-Confidential \ Internal Exception`) apply Template encryption with these
-usage rights:
+Two encrypting Template-protected labels apply usage rights:
 
-```
-VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
-```
+* **`Highly Confidential \ All Employees`** — uses Microsoft's wider
+  **Co-Author** bundle (per-label override):
 
-This bundle equates to **Reviewer** in the Microsoft documentation. Copy
-(EXTRACT), Print, and Allow Macros (OBJMODEL) are **not** granted by
-default because OBJMODEL access is the right that most often breaks
-third-party apps reading Office doc metadata. To grant a wider bundle
-(Microsoft's "Co-Author" set), edit `EncryptionRightsDefinitions` in
-`PurviewConfig.psd1` directly and validate in a pilot tenant.
+  ```
+  VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, EXTRACT, PRINT, OBJMODEL, REPLY, REPLYALL, FORWARD
+  ```
+
+  Co-Author adds **EXTRACT** (copy), **PRINT**, and **OBJMODEL** (Office
+  object-model access — needed for macros and simultaneous editing).
+  Granting OBJMODEL is **necessary but not sufficient** for Office
+  multi-user co-authoring on encrypted files: the tenant-wide switch
+  `Set-PolicyConfig -EnableLabelCoauth:$true` (toolkit param
+  `-EnableLabelCoAuthoring`, opt-in) must also be on.
+
+* **`Highly Confidential \ Internal Exception`** — uses the global
+  default **Reviewer** bundle (no Copy, no Print, no OBJMODEL):
+
+  ```
+  VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
+  ```
+
+The global default applies to any Template-encrypted label that does
+NOT carry a per-label `EncryptionRightsDefinitions` field. To change
+the default, edit `EncryptionRightsDefinitions` in
+`PurviewConfig.psd1`. To override for a specific label, add an
+`EncryptionRightsDefinitions = '...'` field on that label hashtable
+(same token semantics as the global default).
 
 The rights are scoped to **all users in your tenant only** via the
 `{TenantDomain}` token at the start of `EncryptionRightsDefinitions`. At

@@ -159,35 +159,57 @@ $tag = $Config.ManagedByTag
 #                                for explicit broad scope.
 #   * Any other identity (email / `AuthenticatedUsers` already in the
 #     string) passes through unchanged.
-$rights = [string] $Config.EncryptionRightsDefinitions
-if ($rights -match '\{TenantDomain\}') {
-    $tenantDom = $null
-    if ($TenantIdentity) {
-        # Works for both pscustomobject and hashtable shapes.
-        if ($TenantIdentity.DefaultDomain) { $tenantDom = [string] $TenantIdentity.DefaultDomain }
-        elseif ($TenantIdentity.InitialDomain) { $tenantDom = [string] $TenantIdentity.InitialDomain }
-    }
-    if ($tenantDom) {
-        $rights = $rights -replace '\{TenantDomain\}', $tenantDom
-        Write-Host "Encryption rights bundle scoped to tenant domain '$tenantDom' (all users in this tenant only)." -ForegroundColor DarkGray
-        if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
-            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
-                -Target $tenantDom -Status 'Info' `
-                -Detail "Resolved {TenantDomain} token in EncryptionRightsDefinitions to '$tenantDom' (all users in this tenant only; excludes external AuthenticatedUsers)."
+#
+# A label may also override the global default by setting its own
+# `EncryptionRightsDefinitions` field — same token semantics apply.
+# Used to grant the wider Microsoft "Co-Author" rights bundle
+# (adds EXTRACT, PRINT, OBJMODEL) to specific labels like
+# `Highly Confidential\All Employees` without affecting siblings.
+function Resolve-EncryptionRightsTokens {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $RightsDefinitions,
+        [object] $TenantIdentity,
+        [string] $Source = 'EncryptionRightsDefinitions'
+    )
+    $resolved = [string] $RightsDefinitions
+    if ($resolved -match '\{TenantDomain\}') {
+        $tenantDom = $null
+        if ($TenantIdentity) {
+            # Works for both pscustomobject and hashtable shapes.
+            if ($TenantIdentity.DefaultDomain) { $tenantDom = [string] $TenantIdentity.DefaultDomain }
+            elseif ($TenantIdentity.InitialDomain) { $tenantDom = [string] $TenantIdentity.InitialDomain }
         }
-    } else {
-        $msg = "Cannot resolve '{TenantDomain}' token in EncryptionRightsDefinitions: TenantIdentity was not supplied or has no DefaultDomain/InitialDomain. " +
-               "Refusing to fall back to 'AuthenticatedUsers' because that would silently grant encrypted-label access to ALL Microsoft 365 tenants (the exact scope this token was added to remove). " +
-               "Remediation: re-run via Deploy-PurviewBestPractice.ps1 so tenant identity is auto-discovered, OR (if you intentionally want broad scope) replace '{TenantDomain}' with '{AuthenticatedUsers}' in Products/Purview/Config/PurviewConfig.psd1."
-        if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
-            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
-                -Target '(unresolved)' -Status 'Failed' -Detail $msg
+        if ($tenantDom) {
+            $resolved = $resolved -replace '\{TenantDomain\}', $tenantDom
+        } else {
+            $msg = "Cannot resolve '{TenantDomain}' token in $Source : TenantIdentity was not supplied or has no DefaultDomain/InitialDomain. " +
+                   "Refusing to fall back to 'AuthenticatedUsers' because that would silently grant encrypted-label access to ALL Microsoft 365 tenants (the exact scope this token was added to remove). " +
+                   "Remediation: re-run via Deploy-PurviewBestPractice.ps1 so tenant identity is auto-discovered, OR (if you intentionally want broad scope) replace '{TenantDomain}' with '{AuthenticatedUsers}' in the affected config field."
+            if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Resolve {TenantDomain} ($Source)" `
+                    -Target '(unresolved)' -Status 'Failed' -Detail $msg
+            }
+            throw $msg
         }
-        throw $msg
     }
+    if ($resolved -match '\{AuthenticatedUsers\}') {
+        $resolved = $resolved -replace '\{AuthenticatedUsers\}', 'AuthenticatedUsers'
+    }
+    return $resolved
 }
-if ($rights -match '\{AuthenticatedUsers\}') {
-    $rights = $rights -replace '\{AuthenticatedUsers\}', 'AuthenticatedUsers'
+
+$rights = Resolve-EncryptionRightsTokens -RightsDefinitions $Config.EncryptionRightsDefinitions `
+                                          -TenantIdentity $TenantIdentity `
+                                          -Source 'Config.EncryptionRightsDefinitions (global default)'
+if ($Config.EncryptionRightsDefinitions -match '\{TenantDomain\}') {
+    $tenantDom = if ($TenantIdentity.DefaultDomain) { $TenantIdentity.DefaultDomain } else { $TenantIdentity.InitialDomain }
+    Write-Host "Encryption rights bundle scoped to tenant domain '$tenantDom' (all users in this tenant only)." -ForegroundColor DarkGray
+    if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
+            -Target $tenantDom -Status 'Info' `
+            -Detail "Resolved {TenantDomain} token in EncryptionRightsDefinitions (global default) to '$tenantDom' (all users in this tenant only; excludes external AuthenticatedUsers)."
+    }
 }
 $offlineDays = $Config.EncryptionOfflineAccessDays
 
@@ -810,14 +832,24 @@ function Set-LabelEncryption {
         [ValidateSet('Template','UserDefined')]
         [string] $ProtectionType = 'Template',
         [ValidateSet('EncryptOnly','DoNotForward','None')]
-        [string] $UserDefinedOutlookBehavior = 'None'
+        [string] $UserDefinedOutlookBehavior = 'None',
+        # Optional per-label override. When supplied, this rights string is
+        # passed to Set-Label instead of the module-level `$rights` default.
+        # Caller is responsible for resolving any `{TenantDomain}` token
+        # via Resolve-EncryptionRightsTokens before passing it in.
+        [string] $RightsDefinitions
     )
+    $effectiveRights = if ($PSBoundParameters.ContainsKey('RightsDefinitions') -and $RightsDefinitions) {
+        $RightsDefinitions
+    } else {
+        $rights
+    }
     if ($ProtectionType -eq 'Template') {
         Invoke-WithTransientRetry -Description ("Set-Label encryption (Template) '$Identity'") -Action {
             Set-Label -Identity $Identity `
                 -EncryptionEnabled $true `
                 -EncryptionProtectionType 'Template' `
-                -EncryptionRightsDefinitions $rights `
+                -EncryptionRightsDefinitions $effectiveRights `
                 -EncryptionContentExpiredOnDateInDaysOrNever 'Never' `
                 -EncryptionOfflineAccessDays $offlineDays `
                 -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
@@ -1112,18 +1144,37 @@ function New-OrUpdate-Label {
     if ($LabelDef.Encrypt -and $existing -and ($justCreated -or $owned -or $AdoptExisting)) {
         $protType = if ($LabelDef.ProtectionType) { $LabelDef.ProtectionType } else { 'Template' }
         $outlookBehavior = if ($LabelDef.UserDefinedOutlookBehavior) { $LabelDef.UserDefinedOutlookBehavior } else { 'None' }
+        # Per-label rights bundle override. When the label config carries its own
+        # `EncryptionRightsDefinitions`, resolve {TenantDomain} against the same
+        # TenantIdentity and pass to Set-LabelEncryption. Otherwise the function
+        # falls back to the module-level `$rights` default. Used by HCAllEmps
+        # (Co-Author bundle: View/Edit/Save/Copy/Print/Allow-Macros/Reply...)
+        # without affecting siblings that should stay on the Reviewer default.
+        $labelRights = $null
+        if ($LabelDef.EncryptionRightsDefinitions) {
+            $labelRights = Resolve-EncryptionRightsTokens `
+                -RightsDefinitions $LabelDef.EncryptionRightsDefinitions `
+                -TenantIdentity $TenantIdentity `
+                -Source "Labels.$($LabelDef.Name).EncryptionRightsDefinitions"
+        }
         $shouldProcessTarget = if ($protType -eq 'Template') {
-            "Apply encryption (Template / $rightsBundleName rights)"
+            $bundleNote = if ($labelRights) { 'custom rights' } else { "$rightsBundleName rights" }
+            "Apply encryption (Template / $bundleNote)"
         } else {
             "Apply encryption (UserDefined / Outlook=$outlookBehavior)"
         }
         if ($PSCmdlet.ShouldProcess($idForOps, $shouldProcessTarget)) {
             try {
-                Set-LabelEncryption -Identity $idForOps `
-                    -ProtectionType $protType `
-                    -UserDefinedOutlookBehavior $outlookBehavior
+                $encParams = @{
+                    Identity                   = $idForOps
+                    ProtectionType             = $protType
+                    UserDefinedOutlookBehavior = $outlookBehavior
+                }
+                if ($labelRights) { $encParams['RightsDefinitions'] = $labelRights }
+                Set-LabelEncryption @encParams
+                $effectiveRights = if ($labelRights) { $labelRights } else { $rights }
                 $encDetail = if ($protType -eq 'Template') {
-                    "Applied Template encryption to label '$($LabelDef.DisplayName)' with rights: $rights."
+                    "Applied Template encryption to label '$($LabelDef.DisplayName)' with rights: $effectiveRights."
                 } else {
                     "Applied UserDefined encryption to label '$($LabelDef.DisplayName)' (Outlook=$outlookBehavior)."
                 }

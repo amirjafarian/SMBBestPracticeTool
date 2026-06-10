@@ -168,10 +168,29 @@
                 @{
                     Name        = 'HCAllEmps'
                     DisplayName = 'All Employees'
-                    Tooltip     = 'Highly confidential data that allows all employees view, edit, and reply permissions to this content. Data owners can track and revoke content.'
+                    Tooltip     = 'Highly confidential data with Co-Author rights for all users in this tenant only (view, edit, save, copy, print, allow macros, reply, forward). Data owners can track and revoke content.'
                     Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'Template'
+                    # Per-label override for the rights bundle. Uses the
+                    # Microsoft "Co-Author" set instead of the toolkit's
+                    # global Reviewer default — Co-Author adds EXTRACT
+                    # (copy), PRINT, and OBJMODEL (Office object-model
+                    # access, needed for macros + simultaneous editing).
+                    # `{TenantDomain}` resolves to all users in this
+                    # tenant only (matches the global scope; excludes
+                    # external / B2B / MSA). See header comment above
+                    # and Skills/Purview/_CONVENTIONS.md for the full
+                    # semantics.
+                    #
+                    # NOTE: granting OBJMODEL is NECESSARY BUT NOT
+                    # SUFFICIENT for Office multi-user co-authoring on
+                    # encrypted files. The tenant-wide switch
+                    # `-EnableLabelCoAuthoring` (Set-PolicyConfig
+                    # -EnableLabelCoauth:$true, opt-in) must also be on.
+                    # Without both, users get individual edit rights but
+                    # not concurrent editing.
+                    EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,OBJMODEL,REPLY,REPLYALL,FORWARD'
                     ContentMark = $true
                     FooterText  = 'Classified as Highly Confidential'
                 }
@@ -212,9 +231,11 @@
     #     tenant — so the label is accessible to every user in your tenant
     #     but NOT to external authenticated users from other M365 tenants
     #     (which `AuthenticatedUsers` would include). If the toolkit cannot
-    #     resolve the tenant domain at runtime, it falls back to
-    #     `AuthenticatedUsers` with a Warning and a run-log entry so you can
-    #     re-run after fixing connectivity.
+    #     resolve the tenant domain at runtime, it FAILS CLOSED (throws an
+    #     error and writes a Failed run-log entry) rather than silently
+    #     widening scope to `AuthenticatedUsers`. Re-run after fixing
+    #     connectivity, or opt in to broad scope explicitly with
+    #     `{AuthenticatedUsers}` / literal `AuthenticatedUsers`.
     #
     #   * `AuthenticatedUsers`    — Microsoft's broad "any signed-in M365
     #     identity" group. Includes B2B guests, partners, and any external
@@ -234,6 +255,15 @@
     #   '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
     # OBJMODEL is the right that most often breaks third-party apps reading
     # doc metadata, so validate in a pilot tenant before promoting.
+    #
+    # PER-LABEL OVERRIDE:
+    # Any label with `Encrypt=$true / ProtectionType='Template'` may carry
+    # its own `EncryptionRightsDefinitions = '...'` field, which overrides
+    # this global default JUST for that label. Same token semantics apply
+    # ({TenantDomain}, {AuthenticatedUsers}, literal identity). Used by
+    # `HighlyConfidential\All Employees` (HCAllEmps) to grant the wider
+    # Co-Author bundle (allows copy, print, macros, Office co-authoring)
+    # while sibling sub-labels stay on the narrower Reviewer default.
     EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
 
     EncryptionContentExpiredOnDateInDaysOrNever = 'Never'

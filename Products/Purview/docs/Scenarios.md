@@ -81,9 +81,9 @@ Confidential
 ├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
 └─ Internal Exception             (footer only)
 Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
-├─ All Employees                  (footer + ENCRYPTED, all users in your tenant only)
+├─ All Employees                  (footer + ENCRYPTED, Co-Author rights, all users in your tenant only)
 ├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
-└─ Internal Exception             (footer + ENCRYPTED, all users in your tenant only)
+└─ Internal Exception             (footer + ENCRYPTED, Reviewer rights, all users in your tenant only)
 ```
 
 ### What gets published vs created
@@ -118,17 +118,20 @@ People`, `Highly Confidential\Specific People`) let the message / file
 author pick the exact recipients at apply time. Outlook auto-applies Do
 Not Forward; Word / Excel / PowerPoint show a recipient-picker dialog.
 
-| Switch | Rights bundle | Office co-authoring | Programmatic access |
+| Label | Rights bundle | Office co-authoring (rights side) | Programmatic access |
 |---|---|---|---|
-| *(default)* | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
-| *(edit config)* | Microsoft "Co-Author" — adds Copy, Print, Allow Macros | ✅ | ✅ |
+| `Highly Confidential \ All Employees` (default) | Microsoft "Co-Author" — View, Edit, Save, Copy, Print, Allow Macros, Reply, Reply All, Forward | ✅ | ✅ |
+| `Highly Confidential \ Internal Exception` (default) | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
+| Any other Template-encrypted label (no per-label override) | Inherits global default (Reviewer) | ❌ | ❌ |
 
-The default "Reviewer" bundle is conservative because OBJMODEL access is
-the right that most often breaks third-party apps reading Office doc
-metadata. To grant the wider "Co-Author" bundle, edit
-`EncryptionRightsDefinitions` in `PurviewConfig.psd1` directly (replace
-the rights string with the Co-Author equivalent shown above) and
-validate in a pilot tenant before rolling out.
+The toolkit's global default is the conservative "Reviewer" bundle
+because OBJMODEL access (granted by "Co-Author") is the right that most
+often breaks third-party apps reading Office doc metadata. To override
+the default for a specific label, add an
+`EncryptionRightsDefinitions = '...'` field on that label's hashtable in
+`PurviewConfig.psd1`. To change the global default for all
+Template-encrypted labels at once, edit the top-level
+`EncryptionRightsDefinitions` value.
 
 To intentionally OPT IN to broader cross-tenant scope (e.g. you
 collaborate with partner organizations that don't have a B2B trust into
@@ -143,7 +146,7 @@ the broad scope.
 > already protected carry the use-license they had at the moment of
 > labelling. To tighten retroactively, re-label / re-protect them.
 
-Note: enabling the per-label "Co-Author" *rights bundle* is independent
+Note: granting the "Co-Author" *rights bundle* on a label is independent
 of the tenant-wide *label co-authoring switch* (`-EnableLabelCoAuthoring`)
 which controls where Office stores label metadata. Office auto-save +
 simultaneous editing on encrypted documents requires both: the per-label

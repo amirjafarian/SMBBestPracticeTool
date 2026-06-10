@@ -135,6 +135,19 @@ in your tenant only**, explicitly excluding B2B guests attached to OTHER
 tenants, social/MSA accounts, OTP users, and `AuthenticatedUsers` from
 other M365 tenants.
 
+The two HC sub-labels use **different rights bundles** by design:
+
+| Label | Bundle | Office co-authoring (rights side) | Copy / Print / Macros |
+|---|---|---|---|
+| `Highly Confidential\All Employees` | Co-Author (per-label override) | ✅ | ✅ |
+| `Highly Confidential\Internal Exception` | Reviewer (global default) | ❌ | ❌ |
+
+Co-Author adds `EXTRACT`, `PRINT`, `OBJMODEL` on top of Reviewer.
+OBJMODEL grants Office object-model access — necessary for macros and
+for Office simultaneous editing on encrypted files (but **not
+sufficient** for the latter; the tenant-wide `-EnableLabelCoAuthoring`
+switch must also be enabled — see §6 below).
+
 **This is a default change.** Older deployments used
 `AuthenticatedUsers`, which DID include external authenticated users.
 If your tenant has been running an older version of the toolkit, files
