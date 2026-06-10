@@ -887,6 +887,7 @@ if (-not $SkipLabels) {
     try {
         $taskArgs = @{ Config = $config }
         if ($AdoptExisting) { $taskArgs['AdoptExisting'] = $true }
+        if ($tenantIdentity) { $taskArgs['TenantIdentity'] = $tenantIdentity }
         & $labelsScript @taskArgs
         $summary['Sensitivity labels'] = 'OK'
         $_taskSw.Stop()

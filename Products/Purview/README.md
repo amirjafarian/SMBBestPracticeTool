@@ -310,11 +310,11 @@ The most common customisations:
 
 ---
 
-## Encryption rights — what `AuthenticatedUsers` means
+## Encryption rights — tenant-scoped by default
 
-`Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` apply
-encryption with these usage rights to the special identity
-`AuthenticatedUsers`:
+The encrypting labels (`Highly Confidential \ All Employees`, `Highly
+Confidential \ Internal Exception`) apply Template encryption with these
+usage rights:
 
 ```
 VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
@@ -327,14 +327,30 @@ third-party apps reading Office doc metadata. To grant a wider bundle
 (Microsoft's "Co-Author" set), edit `EncryptionRightsDefinitions` in
 `PurviewConfig.psd1` directly and validate in a pilot tenant.
 
-The identity `AuthenticatedUsers` includes signed-in internal users plus
-B2B guests, social/MSA accounts, and one-time-passcode (OTP) users — so it
-is **not an internal-only scope**.
+The rights are scoped to **all users in your tenant only** via the
+`{TenantDomain}` token at the start of `EncryptionRightsDefinitions`. At
+run time the toolkit resolves the token against your auto-discovered
+tenant identity (default verified domain, falling back to your initial
+`*.onmicrosoft.com`). Per Entra rights-management semantics, ANY verified
+domain expands to ALL verified domains in the tenant — so specifying one
+is enough to cover the whole tenant, and it explicitly EXCLUDES external
+`AuthenticatedUsers` from other Microsoft 365 tenants, B2B guests
+attached to other tenants, social/MSA accounts, and OTP users.
 
-If you need an internal-employees-only scope, replace `AuthenticatedUsers` in
-`EncryptionRightsDefinitions` with a
-Microsoft 365 group whose dynamic membership is scoped to
-`user.userType -eq "Member"`. Validate in a pilot tenant before rolling out.
+If you intentionally need the broader cross-tenant scope (e.g. you
+collaborate via the label with partner organizations that do NOT yet have
+a B2B trust into your tenant), edit `EncryptionRightsDefinitions` to use
+`{AuthenticatedUsers}` (or the literal `AuthenticatedUsers`) and document
+the decision. The toolkit refuses to silently fall back to that scope —
+if the `{TenantDomain}` token cannot be resolved (no Graph/EXO identity),
+the labels module aborts with an actionable error.
+
+> **Retroactive scope changes only apply to NEW labelling.** Existing
+> protected files carry the use-license they had at the moment of
+> labelling. Tightening the rights bundle does NOT retroactively revoke
+> external access to files that were already labelled and shared. To
+> tighten retroactively, re-label / re-protect the affected files. See
+> [`docs/Change-Management-Playbook.md`](docs/Change-Management-Playbook.md#known-sharp-edges).
 
 ---
 
@@ -346,8 +362,9 @@ conversation. Full detail and mitigations are in
 
 | Sharp edge | Default behaviour | Why it matters |
 |---|---|---|
-| **`AuthenticatedUsers` ≠ internal only** | The 3 encrypting labels grant rights to every authenticated user in the tenant. | B2B guests (accountants / lawyers / MSPs invited as guests) **can read protected files**. Audit the guest list first. |
+| **Encrypted-label scope = your tenant only (not retroactive)** | The two Template-encrypted HC sub-labels grant rights to all users in your tenant via the `{TenantDomain}` token. | Files labelled BEFORE this toolkit ran (or before you tightened the scope) keep their old rights — re-label them if you need the new scope applied. B2B guests from OTHER tenants are excluded by default; if you need cross-tenant collaboration, switch to `{AuthenticatedUsers}` deliberately. |
 | **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
+| **`Confidential\Specific People` also prompts users** | UserDefined encryption — Outlook auto-applies Do Not Forward; Office desktop apps prompt the recipient list. | Same usability caveat as the HC variant. **Not** published by default. Encryption is enforced once published. |
 | **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set when `-EnableContainerLabels` is passed (or auto-detected on E5). | Microsoft does not officially support reverting. Treat the switch as decision-grade. |
 | **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
 | **7-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 7 years. | Aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC), but still wrong for some verticals (e.g. paediatric healthcare) and for customers who want no automatic deletion. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |

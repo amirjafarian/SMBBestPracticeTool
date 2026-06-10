@@ -12,19 +12,31 @@
       * Public                                        — no protection
       * General                                       — no protection (DEFAULT for email)
       * Confidential                                  — no protection (parent)
-        * Confidential \ All Employees                — Footer "Classified as Confidential" (DEFAULT for documents)
-        * Confidential \ Specific People              — Footer "Classified as Confidential"
+        * Confidential \ All Employees                — Footer "Classified as Confidential"  (DEFAULT for documents)
+        * Confidential \ Specific People              — Footer + UserDefined encryption (Outlook: Do Not Forward; prompt in Word/PPT/Excel)
         * Confidential \ Internal Exception           — Footer "Classified as Confidential"
       * Highly Confidential                           — Watermark "HIGHLY CONFIDENTIAL"
-        * Highly Confidential \ All Employees         — Footer + Reviewer/Co-Author encryption
-        * Highly Confidential \ Specific People       — Footer + user-defined encryption (Outlook: Do Not Forward)
-        * Highly Confidential \ Internal Exception    — Footer + Reviewer/Co-Author encryption
+        * Highly Confidential \ All Employees         — Footer + Template encryption (all users in your tenant only)
+        * Highly Confidential \ Specific People       — Footer + UserDefined encryption (Outlook: Do Not Forward; prompt in Word/PPT/Excel)
+        * Highly Confidential \ Internal Exception    — Footer + Template encryption (all users in your tenant only)
 
-    Encryption is applied only to the three Highly Confidential sub-labels.
-    Confidential sub-labels carry visual markings (footer) but no
-    encryption, which is the SMB-friendly profile (encryption on
-    Confidential breaks too many third-party integrations and external
+    Encryption is applied to the two Highly Confidential Template-protected
+    sub-labels and to both "Specific People" sub-labels (UserDefined).
+    Confidential \ All Employees / Internal Exception carry visual markings
+    (footer) but no encryption — the SMB-friendly profile (encryption on
+    these breaks too many third-party integrations and external
     collaboration scenarios for typical SMB customers).
+
+    Template encryption is scoped to the tenant via the `{TenantDomain}`
+    token in `EncryptionRightsDefinitions`. The token resolves at runtime
+    against the auto-discovered tenant identity (default verified domain,
+    or initial `*.onmicrosoft.com` domain as fallback). Per Entra
+    rights-management semantics, ANY verified domain expands to ALL
+    verified domains in the tenant, so this grants encrypted-label rights
+    to "all users in this tenant only" — NOT external `AuthenticatedUsers`
+    from other M365 tenants. To opt in to the broad scope (e.g. you
+    intentionally collaborate cross-tenant via the label), edit the config
+    to use `{AuthenticatedUsers}` or the literal `AuthenticatedUsers`.
 
     The default rights bundle is Microsoft's "Reviewer" set (View, Edit
     Content, Save, Reply/Reply-All/Forward). If you need a wider bundle
@@ -60,6 +72,17 @@
     Update labels and policies that already exist but were not created by this
     toolkit. Use only after auditing the existing configuration.
 
+.PARAMETER TenantIdentity
+    Tenant-identity object from `Get-ActualTenantIdentity` in the driver
+    script (pscustomobject with `DisplayName`, `DefaultDomain`,
+    `InitialDomain`, `TenantId`). Used to resolve the `{TenantDomain}`
+    token in `EncryptionRightsDefinitions` so encrypted labels grant
+    rights to all users in the tenant only (not external
+    `AuthenticatedUsers`). If the token is present and cannot be
+    resolved, the script aborts the labels module with an actionable
+    error — fall-back to broad `AuthenticatedUsers` would silently
+    reintroduce the exact scope this token was added to remove.
+
 .NOTES
     Label and policy changes can take up to 24 hours to fully propagate to
     all users and clients.
@@ -70,7 +93,13 @@ param(
     [hashtable] $Config,
 
     [Parameter()]
-    [switch] $AdoptExisting
+    [switch] $AdoptExisting,
+
+    # [object] (not [hashtable]) so we accept both the pscustomobject from
+    # Get-ActualTenantIdentity AND a plain hashtable from a partner-driver
+    # wrapper. Property access via `.DefaultDomain` etc. works for both.
+    [Parameter()]
+    [object] $TenantIdentity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -107,7 +136,59 @@ $tag = $Config.ManagedByTag
 # the config string directly. OBJMODEL is the right that most often
 # breaks third-party apps reading Office doc metadata, so the default
 # is conservative.
-$rights = $Config.EncryptionRightsDefinitions
+#
+# Token resolution (case-insensitive):
+#   * `{TenantDomain}`       -> $TenantIdentity.DefaultDomain (preferred)
+#                                or .InitialDomain (fallback). Per Entra
+#                                rights-management semantics, ANY verified
+#                                domain in the tenant expands to ALL
+#                                verified domains in that tenant, so this
+#                                scopes the rights bundle to "all users in
+#                                this tenant only" (not external
+#                                authenticated users from other M365
+#                                tenants).
+#                                If neither domain is available, the
+#                                module ABORTS with an actionable error.
+#                                Silent fall-back to `AuthenticatedUsers`
+#                                would reintroduce the exact broad scope
+#                                this token was added to remove — partners
+#                                who want broad scope must opt-in via
+#                                `{AuthenticatedUsers}` (or the literal
+#                                `AuthenticatedUsers`) in config.
+#   * `{AuthenticatedUsers}` -> the literal `AuthenticatedUsers` keyword,
+#                                for explicit broad scope.
+#   * Any other identity (email / `AuthenticatedUsers` already in the
+#     string) passes through unchanged.
+$rights = [string] $Config.EncryptionRightsDefinitions
+if ($rights -match '\{TenantDomain\}') {
+    $tenantDom = $null
+    if ($TenantIdentity) {
+        # Works for both pscustomobject and hashtable shapes.
+        if ($TenantIdentity.DefaultDomain) { $tenantDom = [string] $TenantIdentity.DefaultDomain }
+        elseif ($TenantIdentity.InitialDomain) { $tenantDom = [string] $TenantIdentity.InitialDomain }
+    }
+    if ($tenantDom) {
+        $rights = $rights -replace '\{TenantDomain\}', $tenantDom
+        Write-Host "Encryption rights bundle scoped to tenant domain '$tenantDom' (all users in this tenant only)." -ForegroundColor DarkGray
+        if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
+                -Target $tenantDom -Status 'Info' `
+                -Detail "Resolved {TenantDomain} token in EncryptionRightsDefinitions to '$tenantDom' (all users in this tenant only; excludes external AuthenticatedUsers)."
+        }
+    } else {
+        $msg = "Cannot resolve '{TenantDomain}' token in EncryptionRightsDefinitions: TenantIdentity was not supplied or has no DefaultDomain/InitialDomain. " +
+               "Refusing to fall back to 'AuthenticatedUsers' because that would silently grant encrypted-label access to ALL Microsoft 365 tenants (the exact scope this token was added to remove). " +
+               "Remediation: re-run via Deploy-PurviewBestPractice.ps1 so tenant identity is auto-discovered, OR (if you intentionally want broad scope) replace '{TenantDomain}' with '{AuthenticatedUsers}' in Products/Purview/Config/PurviewConfig.psd1."
+        if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
+                -Target '(unresolved)' -Status 'Failed' -Detail $msg
+        }
+        throw $msg
+    }
+}
+if ($rights -match '\{AuthenticatedUsers\}') {
+    $rights = $rights -replace '\{AuthenticatedUsers\}', 'AuthenticatedUsers'
+}
 $offlineDays = $Config.EncryptionOfflineAccessDays
 
 # Cache the full label set once so we can match by DisplayName too. The IPPS
@@ -1041,8 +1122,18 @@ function New-OrUpdate-Label {
                 Set-LabelEncryption -Identity $idForOps `
                     -ProtectionType $protType `
                     -UserDefinedOutlookBehavior $outlookBehavior
+                $encDetail = if ($protType -eq 'Template') {
+                    "Applied Template encryption to label '$($LabelDef.DisplayName)' with rights: $rights."
+                } else {
+                    "Applied UserDefined encryption to label '$($LabelDef.DisplayName)' (Outlook=$outlookBehavior)."
+                }
+                Add-RunLogEntry -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $encDetail
             }
-            catch { Write-Warning "    Encryption update failed for '$($LabelDef.DisplayName)': $($_.Exception.Message)" }
+            catch {
+                $encMsg = Format-IPPSError $_
+                Write-Warning "    Encryption update failed for '$($LabelDef.DisplayName)': $encMsg"
+                Add-RunLogEntry -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $encMsg
+            }
         }
     }
 

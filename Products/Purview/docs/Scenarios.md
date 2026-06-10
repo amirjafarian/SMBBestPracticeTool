@@ -78,12 +78,12 @@ Public
 General                           ← default for EMAIL
 Confidential
 ├─ All Employees                  ← default for DOCUMENTS (footer only)
-├─ Specific People                (footer only)
+├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
 └─ Internal Exception             (footer only)
 Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
-├─ All Employees                  (footer + ENCRYPTED, all employees)
-├─ Specific People                (footer + ENCRYPTED, user picks who)
-└─ Internal Exception             (footer + ENCRYPTED, internal-only)
+├─ All Employees                  (footer + ENCRYPTED, all users in your tenant only)
+├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
+└─ Internal Exception             (footer + ENCRYPTED, all users in your tenant only)
 ```
 
 ### What gets published vs created
@@ -95,13 +95,28 @@ Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
 The other sub-labels are created so DLP can match on them, but kept off the
 client UI to reduce decision fatigue. Edit `LabelPolicy.PublishedLabels`
 in [`PurviewConfig.psd1`](../Config/PurviewConfig.psd1) to surface more.
+**Note:** the two "Specific People" sub-labels apply UserDefined
+encryption — Outlook auto-applies Do Not Forward; Word / Excel /
+PowerPoint prompt the recipient list at apply time. Most end users do
+not know how to respond to that dialog, so the default ships them
+unpublished. Promote them only after user training.
 
 ### Encryption — who can open the file?
 
-Only the **3 Highly Confidential sub-labels** apply encryption. The rights
-are granted to `AuthenticatedUsers`, which includes employees, B2B guests,
-social/MSA accounts, and OTP users authenticated through Entra B2B. These
-labels are therefore **not internal-only by default**.
+The **two Template-encrypted Highly Confidential sub-labels** (`All
+Employees`, `Internal Exception`) grant rights to **all users in your
+tenant only**. The rights bundle uses the `{TenantDomain}` token, which
+the toolkit resolves at run time against your auto-discovered tenant
+identity. Per Entra rights-management semantics, ANY verified domain in
+your tenant expands to ALL verified domains in your tenant, so this
+explicitly EXCLUDES external `AuthenticatedUsers` (B2B guests attached
+to OTHER tenants, social/MSA accounts, OTP users from other M365
+tenants).
+
+The **two UserDefined Specific People sub-labels** (`Confidential\Specific
+People`, `Highly Confidential\Specific People`) let the message / file
+author pick the exact recipients at apply time. Outlook auto-applies Do
+Not Forward; Word / Excel / PowerPoint show a recipient-picker dialog.
 
 | Switch | Rights bundle | Office co-authoring | Programmatic access |
 |---|---|---|---|
@@ -114,6 +129,19 @@ metadata. To grant the wider "Co-Author" bundle, edit
 `EncryptionRightsDefinitions` in `PurviewConfig.psd1` directly (replace
 the rights string with the Co-Author equivalent shown above) and
 validate in a pilot tenant before rolling out.
+
+To intentionally OPT IN to broader cross-tenant scope (e.g. you
+collaborate with partner organizations that don't have a B2B trust into
+your tenant), replace the `{TenantDomain}` token in
+`EncryptionRightsDefinitions` with `{AuthenticatedUsers}` (or the
+literal `AuthenticatedUsers`). The toolkit refuses to silently fall
+back to this scope — if `{TenantDomain}` cannot be resolved, the
+labels module aborts with an actionable error rather than re-introduce
+the broad scope.
+
+> **Retroactive scope changes only apply to NEW labelling.** Files
+> already protected carry the use-license they had at the moment of
+> labelling. To tighten retroactively, re-label / re-protect them.
 
 Note: enabling the per-label "Co-Author" *rights bundle* is independent
 of the tenant-wide *label co-authoring switch* (`-EnableLabelCoAuthoring`)

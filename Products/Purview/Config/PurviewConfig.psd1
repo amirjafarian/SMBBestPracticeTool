@@ -41,41 +41,40 @@
     #   * General                                      — no protection (default for EMAIL)
     #   * Confidential                                 — no protection (parent)
     #     * Confidential \ All Employees               — Footer only (default for DOCUMENTS)
-    #     * Confidential \ Specific People             — Footer only
+    #     * Confidential \ Specific People             — Footer + UserDefined encryption (Outlook: Do Not Forward)
     #     * Confidential \ Internal Exception          — Footer only
     #   * Highly Confidential                          — Watermark "HIGHLY CONFIDENTIAL"
-    #     * Highly Confidential \ All Employees        — Footer + Template encryption
+    #     * Highly Confidential \ All Employees        — Footer + Template encryption (tenant-scoped)
     #     * Highly Confidential \ Specific People      — Footer + UserDefined encryption (Outlook: Do Not Forward)
-    #     * Highly Confidential \ Internal Exception   — Footer + Template encryption
+    #     * Highly Confidential \ Internal Exception   — Footer + Template encryption (tenant-scoped)
     #
     # Encryption / protection
     # -----------------------
-    # Protection (encryption + access rights) is enabled ONLY on the three
-    # Highly Confidential sub-labels. Confidential sub-labels carry visual
-    # markings (footer) but no encryption — this is the SMB-friendly profile
-    # because encryption on Confidential breaks too many third-party
-    # integrations and external collaboration scenarios for typical SMB
-    # customers.
+    # Template-protected labels (HC \ All Employees, HC \ Internal Exception)
+    # grant the configured rights bundle to ALL USERS IN YOUR TENANT ONLY —
+    # not external authenticated identities from other Microsoft 365 tenants.
+    # The toolkit auto-resolves your tenant's verified domain at runtime and
+    # substitutes it into `EncryptionRightsDefinitions` (see comment at that
+    # field below for the token syntax and fallback behaviour).
     #
-    # The default rights bundle for encrypted labels is Microsoft's
-    # "Reviewer" set: users in the tenant get View, View Rights, Edit
-    # Content, Save, Reply, Reply All, Forward. Co-authoring (auto-save +
-    # simultaneous editing in Office) and macros / programmatic access via
-    # the Office object model are NOT included by default, because OBJMODEL
-    # access is the main vector by which third-party apps reading doc
-    # metadata break under encryption.
+    # UserDefined-protected labels (both Specific People sub-labels) let the
+    # user pick the recipients and permissions at apply time. Outlook
+    # behaviour is "Do Not Forward"; Office apps (Word, Excel, PowerPoint)
+    # prompt the user to assign permissions.
+    #
+    # The default Template rights bundle is Microsoft's "Reviewer" set:
+    # users get View, View Rights, Edit Content, Save, Reply, Reply All,
+    # Forward. Co-authoring (auto-save + simultaneous editing in Office)
+    # and macros / programmatic access via the Office object model are NOT
+    # included by default, because OBJMODEL access is the main vector by
+    # which third-party apps reading doc metadata break under encryption.
     #
     # If you need a wider rights bundle (e.g. Copy, Print, Allow Macros for
     # third-party tooling), edit `EncryptionRightsDefinitions` below
     # directly — typically by appending `,EXTRACT,PRINT,OBJMODEL` to the
-    # `AuthenticatedUsers:` rights string. Validate in a pilot tenant before
+    # `{TenantDomain}:` rights string. Validate in a pilot tenant before
     # rolling out, since OBJMODEL access affects every third-party app that
     # reads Office document metadata.
-    #
-    # Highly Confidential \ Specific People uses USER-DEFINED encryption
-    # (the user picks who gets access at apply time). Outlook behaviour is
-    # "Do Not Forward"; Office apps (Word, Excel, PowerPoint) prompt the
-    # user to assign permissions.
     #
     # Auto-labeling (client-side and service-side) is intentionally NOT
     # configured here. Add it deliberately via the Purview portal once your
@@ -138,9 +137,11 @@
                 @{
                     Name        = 'ConfidentialSpecificPeople'
                     DisplayName = 'Specific People'
-                    Tooltip     = 'Confidential data shared with specific people inside or outside the organization. No encryption is applied; the label is informational and adds a footer marking.'
+                    Tooltip     = 'Confidential data shared with specific people inside or outside the organization. Encryption is applied at apply time; the user picks who gets access (Outlook: Do Not Forward).'
                     Color       = '#EAA300'
-                    Encrypt     = $false
+                    Encrypt     = $true
+                    ProtectionType = 'UserDefined'
+                    UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
                 }
@@ -201,8 +202,27 @@
 
     # ----- Encryption rights bundle -----
     # Microsoft's "Reviewer" bundle: View, View Rights, Edit Content, Save,
-    # Reply, Reply All, Forward. Granted to AuthenticatedUsers, which
-    # includes B2B guests, social/MSA accounts, and OTP users.
+    # Reply, Reply All, Forward.
+    #
+    # IDENTITY token (one of):
+    #   * `{TenantDomain}`        — RECOMMENDED. Resolved at runtime to the
+    #     tenant's primary verified domain (e.g. `contoso.com`). Per Microsoft
+    #     Entra rights-management semantics, specifying ANY verified domain
+    #     in the tenant automatically expands to ALL verified domains in that
+    #     tenant — so the label is accessible to every user in your tenant
+    #     but NOT to external authenticated users from other M365 tenants
+    #     (which `AuthenticatedUsers` would include). If the toolkit cannot
+    #     resolve the tenant domain at runtime, it falls back to
+    #     `AuthenticatedUsers` with a Warning and a run-log entry so you can
+    #     re-run after fixing connectivity.
+    #
+    #   * `AuthenticatedUsers`    — Microsoft's broad "any signed-in M365
+    #     identity" group. Includes B2B guests, partners, and any external
+    #     Entra user. Use this only if you intentionally need to share
+    #     encrypted content across tenants.
+    #
+    #   * `user@domain.com`       — A specific mail-enabled user / group /
+    #     mailbox in your tenant. Useful for narrow-scope custom labels.
     #
     # Co-authoring (auto-save + simultaneous editing) and macro / object-
     # model access are NOT granted, which is the safe default when third-
@@ -211,10 +231,10 @@
     # If you need a wider bundle (the Microsoft "Co-Author" set adds Copy
     # (EXTRACT), Print, Allow Macros (OBJMODEL)), edit the string below
     # directly. The "Co-Author" equivalent is:
-    #   'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
+    #   '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
     # OBJMODEL is the right that most often breaks third-party apps reading
     # doc metadata, so validate in a pilot tenant before promoting.
-    EncryptionRightsDefinitions = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
+    EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
 
     EncryptionContentExpiredOnDateInDaysOrNever = 'Never'
     EncryptionOfflineAccessDays = 30

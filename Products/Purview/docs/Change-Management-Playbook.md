@@ -122,28 +122,53 @@ These are NOT bugs. They are defaults the toolkit ships with that are
 correct technically but require a conversation with the customer. Cover
 them in Phase 0.
 
-### 1. `AuthenticatedUsers` is not the same as "internal only" when B2B guests exist
+### 1. Encrypted-label rights are tenant-scoped, but not retroactive
 
-The three encrypting labels (`Confidential`, `Confidential\AllEmployees`,
-`Highly Confidential` and its sub-labels) grant rights to
-`AuthenticatedUsers`. **A B2B guest in the customer tenant counts as
-authenticated.** If the customer has invited their accountant, lawyer, or
-MSP staff as guests, those guests can open the protected files.
+The two Template-encrypted Highly Confidential sub-labels (`All
+Employees`, `Internal Exception`) grant rights via the `{TenantDomain}`
+token in `EncryptionRightsDefinitions`. At run time the toolkit resolves
+this against your auto-discovered tenant identity (default verified
+domain, falling back to your initial `*.onmicrosoft.com`). Per Entra
+rights-management semantics, ANY verified domain expands to ALL verified
+domains in your tenant — so the rights bundle is scoped to **all users
+in your tenant only**, explicitly excluding B2B guests attached to OTHER
+tenants, social/MSA accounts, OTP users, and `AuthenticatedUsers` from
+other M365 tenants.
 
-**Mitigation.** Either restrict the encryption rights to a specific group
-(edit `EncryptionRightsDefinitions` in `PurviewConfig.psd1`), or audit the
-customer's guest list before deploy and confirm the guest set is
-intentional.
+**This is a default change.** Older deployments used
+`AuthenticatedUsers`, which DID include external authenticated users.
+If your tenant has been running an older version of the toolkit, files
+labelled BEFORE this change carry the older, broader rights — Microsoft
+Rights Management embeds the use-license at the moment of protection.
+Tightening the label template does NOT retroactively revoke external
+access to previously-labelled files.
 
-### 2. `Highly Confidential\Specific People` prompts the user
+**Mitigation when promoting this change:**
+- Communicate to file owners that the new scope only applies to NEW
+  label applications and to files that get re-labelled.
+- To tighten retroactively for sensitive existing files, ask owners to
+  re-apply the label (or remove and re-apply) — this re-issues the
+  use-license under the new scope.
+- If you intentionally need cross-tenant collaboration via the label
+  (e.g. you do business with external partners who don't have a B2B
+  trust into your tenant), edit `EncryptionRightsDefinitions` in
+  `PurviewConfig.psd1` to use `{AuthenticatedUsers}` (or the literal
+  `AuthenticatedUsers`) and document the decision. The toolkit refuses
+  to silently fall back to that scope — if `{TenantDomain}` cannot be
+  resolved, the labels module aborts with an actionable error.
+- The two UserDefined Specific People sub-labels are unaffected by this
+  scope — the message / file author picks the recipients each time.
 
-This label asks the user, in Word/Excel/PowerPoint, to pick who can open
-the file. Most users have no idea what to do with that dialog and either
-cancel or grant overly broad rights.
+### 2. `Highly Confidential\Specific People` (and `Confidential\Specific People`) prompt the user
 
-**Mitigation.** Either don't publish this sub-label to end users (it's
-**not** in `LabelPolicy.PublishedLabels` by default — good), or include a
-30-second explainer in the user comms.
+Both Specific People sub-labels apply UserDefined encryption: Outlook
+auto-applies Do Not Forward, and Word/Excel/PowerPoint ask the user to
+pick who can open the file. Most users have no idea what to do with
+that dialog and either cancel or grant overly broad rights.
+
+**Mitigation.** Either don't publish these sub-labels to end users
+(neither is in `LabelPolicy.PublishedLabels` by default — good), or
+include a 30-second explainer in the user comms before publishing them.
 
 ### 3. Container labels are one-way
 
