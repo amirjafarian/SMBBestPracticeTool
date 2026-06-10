@@ -1098,11 +1098,11 @@ function New-OrUpdate-Label {
                         "Set label '$($LabelDef.DisplayName)' colour to $configColor."
                     }
                     Write-Host "    ~ $detail" -ForegroundColor Yellow
-                    Add-RunLogEntry -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $detail
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $detail
                 } catch {
                     $msg = Format-IPPSError $_
                     Write-Warning "    Failed to update colour for label '$($LabelDef.DisplayName)': $msg"
-                    Add-RunLogEntry -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $msg
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $msg
                 }
             }
         }
@@ -1127,12 +1127,12 @@ function New-OrUpdate-Label {
                 } else {
                     "Applied UserDefined encryption to label '$($LabelDef.DisplayName)' (Outlook=$outlookBehavior)."
                 }
-                Add-RunLogEntry -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $encDetail
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $encDetail
             }
             catch {
                 $encMsg = Format-IPPSError $_
                 Write-Warning "    Encryption update failed for '$($LabelDef.DisplayName)': $encMsg"
-                Add-RunLogEntry -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $encMsg
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $encMsg
             }
         }
     }
