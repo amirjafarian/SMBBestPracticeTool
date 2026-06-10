@@ -546,7 +546,21 @@ if (-not $policyCmd) {
     throw "New-DlpCompliancePolicy is not available. Connect to Security & Compliance (IPPS) first."
 }
 if (-not $policyCmd.Parameters.ContainsKey('Locations') -or -not $policyCmd.Parameters.ContainsKey('EnforcementPlanes')) {
-    throw "Your ExchangeOnlineManagement / IPPS module does not expose the Copilot DLP parameters (-Locations / -EnforcementPlanes). Update the module: Update-Module ExchangeOnlineManagement"
+    $exoMod = Get-Module ExchangeOnlineManagement -ListAvailable -ErrorAction SilentlyContinue |
+        Sort-Object Version -Descending | Select-Object -First 1
+    $installedVer = if ($exoMod) { "v$($exoMod.Version)" } else { 'not installed' }
+    $minVer = '3.9.0'
+    throw @"
+Your ExchangeOnlineManagement module ($installedVer) does not expose the Copilot DLP parameters (-Locations / -EnforcementPlanes).
+The IPPS REST proxy built by ExchangeOnlineManagement v$minVer+ is required for Microsoft 365 Copilot DLP policies.
+
+Fix (in an ELEVATED PowerShell, then close and reopen PowerShell before re-running this script):
+    Update-Module ExchangeOnlineManagement -Force
+or
+    Install-Module ExchangeOnlineManagement -Scope AllUsers -Force -AllowClobber
+
+This was flagged earlier at connect time as a non-blocking 'Module currency' warning — see the HTML report for the same install commands.
+"@
 }
 
 foreach ($cfg in $Config.AIGovernance.DlpPolicies) {

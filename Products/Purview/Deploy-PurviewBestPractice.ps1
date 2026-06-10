@@ -510,6 +510,10 @@ if ($connectArgs.ContainsKey('ConnectGraph')) {
 }
 if ($AutoInstallModules)   { $connectArgs['AutoInstallModules']   = $true }
 if ($NonInteractive)       { $connectArgs['NonInteractive']       = $true }
+# Surface the Copilot DLP module-readiness pre-req only when the AI step is
+# in scope. License auto-detect may still flip $BPOnly later, but if the
+# operator already passed -BPOnly we can skip the warning at connect time.
+if ($aiInScope -and -not $BPOnly) { $connectArgs['AIControlsInScope'] = $true }
 $connectionInfo = & $connectScript @connectArgs
 if ($connectionInfo -and $connectionInfo.SharePointAdminUrl) {
     $SharePointAdminUrl = $connectionInfo.SharePointAdminUrl

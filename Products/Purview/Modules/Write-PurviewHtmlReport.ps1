@@ -286,6 +286,87 @@ function Write-PurviewHtmlReport {
     }
     $null = $sb.AppendLine('</tbody></table></section>')
 
+    # ---------- Module currency — pre-req warnings surfaced from the run log -----
+    # Connect-PurviewServices.ps1 emits SessionGuard:CopilotDlp entries with
+    # reason=exo-version-below-copilot-dlp-minimum when the locally installed
+    # ExchangeOnlineManagement module is older than the threshold needed for
+    # Microsoft 365 Copilot DLP (Locations/EnforcementPlanes parameters). The
+    # check is non-blocking; this section gives the operator the install
+    # commands so the NEXT run doesn't hit the AI step backstop. We render
+    # the section only when at least one such warning was logged.
+    if ($RunLog -and $RunLog.Count -gt 0) {
+        $modWarnings = @($RunLog | Where-Object {
+            $_.Module -eq 'Connect-PurviewServices' -and
+            $_.Action -like 'SessionGuard:*' -and
+            $_.Status -in @('Retried','Failed','Skipped') -and
+            $_.Detail -like '*-below-*-minimum*'
+        })
+        if ($modWarnings.Count -gt 0) {
+            $null = $sb.AppendLine('<section><h2>Module currency</h2>')
+            $null = $sb.AppendLine('<div class="overall-banner overall-skipped" style="border-radius:6px;border-left-width:4px;padding:12px 14px;font-weight:500;margin-bottom:12px;">')
+            $null = $sb.AppendLine(('One or more PowerShell modules on the machine that ran this deploy are older than the recommended minimum. The deploy was NOT stopped — this is observation only — but the affected step(s) will fail until the module is updated.'))
+            $null = $sb.AppendLine('</div>')
+
+            foreach ($w in $modWarnings) {
+                # Parse 'reason=...; k1=v1; k2=v2' detail string into a hashtable.
+                $detail = @{}
+                if ($w.Detail) {
+                    foreach ($part in ($w.Detail -split ';')) {
+                        $kv = $part.Trim() -split '=', 2
+                        if ($kv.Count -eq 2) { $detail[$kv[0]] = $kv[1] }
+                    }
+                }
+
+                $svc       = ($w.Action -replace '^SessionGuard:','')
+                $modName   = if ($detail.moduleName) { $detail.moduleName } else { '(module)' }
+                $installed = if ($detail.installed)  { $detail.installed }  else { 'unknown' }
+                $minReq    = if ($detail.minimumRequired) { $detail.minimumRequired } else { 'unknown' }
+                $modPath   = if ($detail.installedPath) { $detail.installedPath } else { $null }
+
+                $null = $sb.AppendLine('<div style="border:1px solid #d0d7de;border-radius:6px;padding:14px 16px;margin-bottom:12px;">')
+                $null = $sb.AppendLine(('<div style="font-weight:600;font-size:13px;margin-bottom:8px;">{0} &mdash; {1}</div>' -f (_Encode $svc), (_Encode $modName)))
+                $null = $sb.AppendLine('<dl class="meta-grid" style="margin:0 0 12px 0;">')
+                $null = $sb.AppendLine(('<dt>Installed</dt><dd>v{0}</dd>' -f (_Encode $installed)))
+                $null = $sb.AppendLine(('<dt>Minimum required</dt><dd>v{0}</dd>' -f (_Encode $minReq)))
+                if ($modPath) {
+                    $null = $sb.AppendLine(('<dt>Loaded from</dt><dd>{0}</dd>' -f (_Encode $modPath)))
+                }
+                $null = $sb.AppendLine('</dl>')
+
+                # Module-specific install guide.
+                if ($modName -eq 'ExchangeOnlineManagement') {
+                    $null = $sb.AppendLine('<p style="margin:0 0 6px 0;font-weight:600;color:#1f2328;">Why it matters</p>')
+                    $null = $sb.AppendLine(('<p style="margin:0 0 12px 0;color:#57606a;font-size:13px;">Microsoft 365 Copilot DLP policies require <code>New-DlpCompliancePolicy -Locations $loc -EnforcementPlanes @("CopilotExperiences")</code>. Those parameters are populated by the IPPS REST proxy that <code>Connect-IPPSSession</code> builds at connect time. ExchangeOnlineManagement v{0} does <b>not</b> emit those parameters; step <b>[5/5] AI governance</b> will throw with a clear "module does not expose the Copilot DLP parameters" message until you upgrade.</p>' -f (_Encode $installed)))
+
+                    $null = $sb.AppendLine('<p style="margin:0 0 6px 0;font-weight:600;color:#1f2328;">Install guide (run on the machine that executes this script)</p>')
+                    $null = $sb.AppendLine('<ol style="margin:0 0 6px 0;padding-left:22px;color:#1f2328;font-size:13px;">')
+                    $null = $sb.AppendLine('<li>Close every PowerShell window that has connected to Exchange Online or IPPS (the assemblies are pinned in-process and cannot be hot-swapped).</li>')
+                    $null = $sb.AppendLine('<li>Right-click PowerShell &rarr; <b>Run as administrator</b>.</li>')
+                    $null = $sb.AppendLine('<li>Run ONE of these:</li>')
+                    $null = $sb.AppendLine('</ol>')
+                    $null = $sb.AppendLine('<pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto;margin:6px 0;"># Option A — refresh the existing install in-place')
+                    $null = $sb.AppendLine('Update-Module ExchangeOnlineManagement -Force')
+                    $null = $sb.AppendLine('')
+                    $null = $sb.AppendLine('# Option B — install/replace for all users (recommended when multiple side-by-side versions are installed)')
+                    $null = $sb.AppendLine('Install-Module ExchangeOnlineManagement -Scope AllUsers -Force -AllowClobber')
+                    $null = $sb.AppendLine('')
+                    $null = $sb.AppendLine('# Verify the new version is the highest available')
+                    $null = $sb.AppendLine('Get-Module ExchangeOnlineManagement -ListAvailable | Sort-Object Version -Descending | Select-Object -First 3 Name, Version, ModuleBase</pre>')
+                    $null = $sb.AppendLine('<ol start="4" style="margin:6px 0 0 0;padding-left:22px;color:#1f2328;font-size:13px;">')
+                    $null = $sb.AppendLine('<li>Open a fresh PowerShell window and re-run <code>Deploy-PurviewBestPractice.ps1</code> with the same parameters you used today. Earlier steps that succeeded are idempotent and will fast-path; AI governance will then provision the Copilot DLP policies in <code>PurviewConfig.psd1 -&gt; AIGovernance</code>.</li>')
+                    $null = $sb.AppendLine('</ol>')
+                    $null = $sb.AppendLine('<p style="margin:10px 0 0 0;color:#57606a;font-size:12px;">References: <a href="https://learn.microsoft.com/powershell/module/exchange/new-dlpcompliancepolicy" target="_blank" rel="noopener">New-DlpCompliancePolicy (Microsoft Learn)</a> &middot; <a href="https://learn.microsoft.com/purview/dlp-microsoft365-copilot-location-learn-about" target="_blank" rel="noopener">DLP for Microsoft 365 Copilot</a> &middot; <a href="https://www.powershellgallery.com/packages/ExchangeOnlineManagement" target="_blank" rel="noopener">PSGallery: ExchangeOnlineManagement</a>.</p>')
+                } else {
+                    # Generic fallback for any future SessionGuard module-currency warning.
+                    $null = $sb.AppendLine(('<pre style="background:#0d1117;color:#c9d1d9;padding:12px;border-radius:6px;font-size:12px;overflow-x:auto;margin:6px 0;">Update-Module {0} -Force</pre>' -f $modName))
+                }
+
+                $null = $sb.AppendLine('</div>')
+            }
+            $null = $sb.AppendLine('</section>')
+        }
+    }
+
     # ---------- "What's next" — contextual next-steps panel ------------------
     # Drives off $Summary outcomes so the partner sees a deploy-specific
     # to-do list. The Activity Explorer walkthrough comes from
