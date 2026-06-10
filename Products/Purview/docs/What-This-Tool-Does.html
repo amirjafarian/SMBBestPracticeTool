@@ -239,7 +239,7 @@
     <div class="card on">
       <h3>1. Tenant settings <span class="tag on">Default</span></h3>
       <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels.</p>
-      <p class="meta"><span class="tag auto">-EnableContainerLabels</span> auto-on for E5 / Purview Suite / Business Premium &middot; <span class="tag opt">-EnablePremiumAudit</span></p>
+      <p class="meta"><span class="tag on">Container labels</span> default-on (opt out with <code>-SkipContainerLabels</code>) &middot; <span class="tag opt">-EnablePremiumAudit</span></p>
     </div>
     <div class="card on">
       <h3>2. Sensitivity labels <span class="tag on">Default</span></h3>
@@ -278,8 +278,8 @@
         <td>Office can apply (and persist) sensitivity labels when saving as PDF.</td></tr>
       <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag opt">-EnableLabelCoAuthoring</span></td>
         <td>Tenant-wide switch that lets multiple users edit encrypted Office files at once. <strong>One-way change</strong> &mdash; disabling it later loses labels on unencrypted Office files, breaks third-party tools that read labels from the old metadata location (AIP scanner &lt; v3.0, OneDrive sync &lt; 19.002, MIP SDK &lt; 1.7, custom DLP scanners, custom Exchange mail-flow rules). <strong>Off by default.</strong></td></tr>
-      <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag auto">Auto-detected</span></td>
-        <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Auto-enabled on M365 E5 / Purview Suite / Business Premium tenants</strong> (license auto-detect). Pass <code>-NoLicenseAutoDetect</code> or <code>-BPOnly</code> to opt out; pass <code>-EnableContainerLabels</code> to force-on for tenants the detector cannot classify.</td></tr>
+      <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag on">Default</span></td>
+        <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Enabled by default on every run</strong> &mdash; Business Premium is the toolkit's licensing floor and BP includes Entra ID P1, the AAD-side requirement. Pass <code>-SkipContainerLabels</code> to opt out. License auto-detect skips it automatically when the tenant has no recognised M365 BP/E5/Purview Suite SKU.</td></tr>
       <tr><td>Premium audit (mailbox SearchQueryInitiated)</td><td><code>per-mailbox</code></td><td><span class="tag opt">-EnablePremiumAudit</span></td>
         <td>Adds the SearchQueryInitiated audit event to nominated mailboxes. Requires E5 / Audit (Premium) licensing.</td></tr>
     </tbody>

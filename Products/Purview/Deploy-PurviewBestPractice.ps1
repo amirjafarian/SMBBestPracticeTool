@@ -111,9 +111,24 @@
     removed in a future major version.
 
 .PARAMETER EnableContainerLabels
-    Also enable Group.Unified EnableMIPLabels so labels can be applied to
-    Microsoft 365 groups, Teams, and SharePoint sites. Requires Microsoft
-    Graph (Beta) connection. Off by default.
+    DEPRECATED. Container labels (Group.Unified EnableMIPLabels) are now
+    provisioned by default (the toolkit's licensing floor is Microsoft 365
+    Business Premium, which includes Entra ID P1 — the AAD-side
+    requirement). See -SkipContainerLabels to opt out. Passing this switch
+    emits a deprecation warning and is otherwise ignored. Cannot be
+    combined with -SkipContainerLabels. Kept for backward compatibility
+    with existing partner runbooks; will be removed in a future major
+    version.
+
+.PARAMETER SkipContainerLabels
+    Opt out of container labels (Group.Unified EnableMIPLabels) for
+    Microsoft 365 groups, Teams, and SharePoint sites. Use this only when
+    container labels are managed by another process (e.g. an existing
+    Conditional Access / sensitivity-label rollout owned by the customer
+    or another partner), or on a sub-Business-Premium tenant that lacks
+    Entra ID P1. License auto-detect also flips this on automatically
+    when the tenant has no recognised Microsoft 365 BP / E5 / Purview
+    Suite SKU.
 
 .PARAMETER EnablePremiumAudit
     Also enable per-mailbox SearchQueryInitiated audit. Requires Audit
@@ -156,19 +171,22 @@
 
 .PARAMETER NoLicenseAutoDetect
     Disable automatic license-tier detection. By default the script connects to
-    Microsoft Graph, reads /subscribedSkus, and auto-enables -EnableContainerLabels
-    when a Microsoft 365 E5 or Purview Suite SKU is detected on the tenant. Pass
-    this switch to skip detection (e.g. when running unattended in a tenant
-    where the operator does not have Directory.ReadWrite.All consent).
+    Microsoft Graph, reads /subscribedSkus, and (a) skips AI governance when no
+    Microsoft 365 E5 / Purview Suite SKU is detected, and (b) skips container
+    labels when no Microsoft 365 BP / E5 / Purview Suite SKU is detected.
+    Pass this switch to skip detection (e.g. when running unattended in a
+    tenant where the operator does not have Organization.Read.All consent).
 
 .PARAMETER BPOnly
     Hard-restrict the toolkit to Microsoft 365 Business Premium-eligible
     features only. Refuses to enable add-ons that require Microsoft 365 E5 /
     Microsoft Purview Suite licensing:
-      * Container labels for Teams / Sites / M365 Groups (-EnableContainerLabels)
       * Premium Audit / 1-year retention (-EnablePremiumAudit)
       * Endpoint DLP (Devices), DLP for Defender for Cloud Apps,
         on-premises DLP scanner, Power BI DLP
+    Container labels (Group.Unified EnableMIPLabels) are NOT in this list —
+    they work on Business Premium because BP includes Entra ID P1 (the
+    AAD-side requirement). Pass -SkipContainerLabels if you need to opt out.
     Also propagates to the DLP module so any custom workload added to
     PurviewConfig.psd1 that requires E5 is rejected up-front.
 
@@ -198,8 +216,8 @@
 .NOTES
     * Required modules: ExchangeOnlineManagement,
       Microsoft.Online.SharePoint.PowerShell, and
-      Microsoft.Graph.Beta.Identity.DirectoryManagement (only when
-      -EnableContainerLabels is used).
+      Microsoft.Graph.Beta.Identity.DirectoryManagement (skipped only when
+      -SkipContainerLabels or -SkipTenantSettings is used).
     * Label and policy changes can take up to 24 hours to propagate.
     * Always pilot in a test tenant before production rollout.
 #>
@@ -239,8 +257,15 @@ param(
     [Parameter()]
     [switch] $ApplyAIControls,
 
+    # DEPRECATED — see -SkipContainerLabels. Retained as a no-op switch (with
+    # a runtime deprecation warning) so existing partner runbooks that pass
+    # -EnableContainerLabels continue to work without a hard parameter-binding
+    # error. Mutually exclusive with -SkipContainerLabels (validated below).
     [Parameter()]
     [switch] $EnableContainerLabels,
+
+    [Parameter()]
+    [switch] $SkipContainerLabels,
 
     [Parameter()]
     [switch] $EnablePremiumAudit,
@@ -381,9 +406,6 @@ if ($EnablePremiumAudit -and (-not $PremiumAuditMailbox -or $PremiumAuditMailbox
 
 if ($BPOnly) {
     $bpViolations = @()
-    if ($EnableContainerLabels) {
-        $bpViolations += "  * -EnableContainerLabels requires Microsoft 365 E5 / Purview Suite (AAD P1+)."
-    }
     if ($EnablePremiumAudit) {
         $bpViolations += "  * -EnablePremiumAudit (Audit Premium / SearchQueryInitiated) requires Microsoft 365 E5."
     }
@@ -403,6 +425,20 @@ if ($ApplyAIControls) {
     Write-Warning "-ApplyAIControls is deprecated and ignored: AI governance is now default-on for E5 / Purview Suite tenants. Pass -SkipAIControls to opt out, or -BPOnly to force-skip. This switch will be removed in a future release."
 }
 
+# Container labels: validate the deprecated/new switch combo and warn callers
+# who still pass -EnableContainerLabels. The switch is a no-op (container
+# labels are now default-on — Business Premium is the toolkit's licensing
+# floor and BP includes Entra ID P1, which is the AAD-side requirement) but
+# we keep it bindable so existing partner runbooks don't crash with
+# "parameter not found". Mirrors the -ApplyAIControls / -SkipAIControls
+# deprecation pattern above.
+if ($EnableContainerLabels -and $SkipContainerLabels) {
+    throw "-EnableContainerLabels and -SkipContainerLabels cannot be combined. -EnableContainerLabels is deprecated (container labels are now default-on); use -SkipContainerLabels alone to opt out, or remove both switches to accept the default."
+}
+if ($EnableContainerLabels) {
+    Write-Warning "-EnableContainerLabels is deprecated and ignored: container labels are now default-on (Business Premium is the licensing floor and BP includes Entra ID P1, the AAD-side requirement). Pass -SkipContainerLabels to opt out. This switch will be removed in a future release."
+}
+
 # ---------------------------------------------------------------------------
 # Preflight summary
 # ---------------------------------------------------------------------------
@@ -416,10 +452,9 @@ $tickAi         = if ($SkipAIControls)          { ' ' }
                   elseif ($BPOnly -or $NoLicenseAutoDetect) {
                       if ($BPOnly) { ' ' } else { 'X' }
                   } else                            { '?' }
-$tickContainer  = if ($BPOnly -or $NoLicenseAutoDetect -or $SkipTenantSettings) {
-                      if ($EnableContainerLabels) { 'X' } else { ' ' }
-                  } elseif ($EnableContainerLabels) { 'X' }
-                  else                              { '?' }
+$tickContainer  = if ($SkipContainerLabels -or $SkipTenantSettings) { ' ' }
+                  elseif ($BPOnly -or $NoLicenseAutoDetect)         { 'X' }
+                  else                                                { '?' }
 $tickPremium    = if ($EnablePremiumAudit)      { 'X' } else { ' ' }
 $tickAdopt      = if ($AdoptExisting)           { 'X' } else { ' ' }
 $tickLabelCoAuth = if ($EnableLabelCoAuthoring) { 'X' } else { ' ' }
@@ -445,7 +480,7 @@ $banner = @"
     [$tickAi] AI governance      (Block Copilot grounding on Highly Confidential — default on; opt out: -SkipAIControls; auto-skipped on Business Premium)
 
   Optional features:
-    [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = auto-enable on M365 E5 / Purview Suite / Business Premium]
+    [$tickContainer] Container labels (Group.Unified EnableMIPLabels)   ['?' = default on; auto-skips if license detect finds no recognised M365 BP/E5/Purview Suite SKU]
     [$tickPremium] Premium audit    (SearchQueryInitiated)
     [$tickAdopt] Adopt existing   (overwrite non-toolkit objects)
     [$tickLabelCoAuth] Label co-auth tenant switch (ONE-WAY — see -EnableLabelCoAuthoring help)
@@ -480,18 +515,22 @@ if ($DelegatedOrganization){ $connectArgs['DelegatedOrganization'] = $DelegatedO
 # License auto-detect must run when ANY tier-dependent feature is in scope.
 # Today there are two:
 #   * AI governance — default-on for E5 / Purview Suite, auto-skipped on BP.
-#   * Container labels — auto-enabled when an E5 / Purview Suite SKU is
-#     detected, and only when the caller hasn't pre-opted-in / opted-out.
+#   * Container labels — default-on for everyone (BP is the licensing floor
+#     and BP includes Entra ID P1, the AAD-side requirement). License
+#     auto-detect's only job here is to flip $SkipContainerLabels = $true
+#     when the tenant has no recognised M365 BP/E5/Purview Suite SKU
+#     ('Other' tier), since the Graph call would otherwise fail with
+#     "tenant lacks required license" on a sub-BP tenant.
 # If neither is in scope, skip the Graph call to keep BP-only / partial
 # re-runs lean.
-$aiInScope                 = -not $SkipAIControls
-$containerAutoEnableInScope = (-not $SkipTenantSettings -and -not $EnableContainerLabels)
+$aiInScope                  = -not $SkipAIControls
+$containerLabelsInScope     = (-not $SkipTenantSettings -and -not $SkipContainerLabels)
 $wantGraphForAutoDetect = (-not $BPOnly -and -not $NoLicenseAutoDetect -and
-                           ($aiInScope -or $containerAutoEnableInScope))
-if ($EnableContainerLabels -or $wantGraphForAutoDetect) { $connectArgs['ConnectGraph'] = $true }
+                           ($aiInScope -or $containerLabelsInScope))
+if ($containerLabelsInScope -or $wantGraphForAutoDetect) { $connectArgs['ConnectGraph'] = $true }
 # Least-privilege Graph scopes (Jim's PR1 feedback):
 #   * Organization.Read.All       — covers /subscribedSkus + /organization (license auto-detect, tenant-identity confirm)
-#   * Directory.ReadWrite.All     — only added when container labels are explicitly requested.
+#   * Directory.ReadWrite.All     — added upfront whenever container labels are in scope.
 #                                   Required for Get-MgBetaDirectorySettingTemplate + New-/Update-MgBetaDirectorySetting
 #                                   against the Group.Unified directory setting. Note: we did experiment with the
 #                                   narrower GroupSettings.ReadWrite.All scope (the documented permission for
@@ -500,12 +539,10 @@ if ($EnableContainerLabels -or $wantGraphForAutoDetect) { $connectArgs['ConnectG
 #                                   token cache wasn't refreshed and admin-consent for the narrower scope wasn't
 #                                   reliably available. Directory.ReadWrite.All is the historically-consented,
 #                                   known-working scope and the canonical fallback per the Graph docs.
-#   Auto-detect promotion (E5/Purview Suite tenant -> EnableContainerLabels gets flipped) extends the
-#   consent later via a second Connect-MgGraph call.
 $graphScopes = @()
 if ($connectArgs.ContainsKey('ConnectGraph')) {
     $graphScopes = @('Organization.Read.All')
-    if ($EnableContainerLabels) { $graphScopes += 'Directory.ReadWrite.All' }
+    if ($containerLabelsInScope) { $graphScopes += 'Directory.ReadWrite.All' }
     $connectArgs['GraphScopes'] = $graphScopes
 }
 if ($AutoInstallModules)   { $connectArgs['AutoInstallModules']   = $true }
@@ -520,7 +557,7 @@ if ($connectionInfo -and $connectionInfo.SharePointAdminUrl) {
 }
 
 # ---------------------------------------------------------------------------
-# License auto-detection (E5 / Purview Suite -> auto-enable Container labels)
+# License auto-detection (drives AI governance + container-labels gating)
 # ---------------------------------------------------------------------------
 function Get-TenantPurviewLicenseTier {
     [CmdletBinding()]
@@ -616,10 +653,11 @@ if ($wantGraphForAutoDetect) {
     $tier = Get-TenantPurviewLicenseTier
     switch ($tier.Tier) {
         'E5OrPurviewSuite' {
-            $EnableContainerLabels = $true
             Write-Host ("  Detected: Microsoft 365 E5 / Purview Suite (SKU: {0})." -f ($tier.PartNumbers -join ', ')) -ForegroundColor Green
-            Write-Host "  Auto-enabling: Container labels (Group.Unified EnableMIPLabels)." -ForegroundColor Green
-            Write-Host "  (To opt out, re-run with -NoLicenseAutoDetect or -BPOnly.)" -ForegroundColor DarkGray
+            if ($containerLabelsInScope) {
+                Write-Host "  Container labels (Group.Unified EnableMIPLabels): enabled (default)." -ForegroundColor Green
+                Write-Host "  (To opt out, re-run with -SkipContainerLabels.)" -ForegroundColor DarkGray
+            }
         }
         'BusinessPremium' {
             Write-Host ("  Detected: Microsoft 365 Business Premium (SKU: {0})." -f ($tier.PartNumbers -join ', ')) -ForegroundColor Green
@@ -627,14 +665,12 @@ if ($wantGraphForAutoDetect) {
             # Group.Unified.EnableMIPLabels (container labels on Teams / M365
             # Groups / SharePoint sites). Microsoft markets container labels
             # as an E5 / Purview Suite feature but the tenant switch itself
-            # works on BP — flip it on automatically so partners don't ship
-            # half-configured BP tenants. See README:79 ("E5 / Purview Suite
-            # — also AAD P1+") and Skills/Purview/Setup-TenantSettings.skill.md
-            # for the rationale. To opt out, pass -NoLicenseAutoDetect.
-            if (-not $EnableContainerLabels) {
-                $EnableContainerLabels = $true
-                Write-Host "  Auto-enabling: Container labels (Group.Unified EnableMIPLabels)." -ForegroundColor Green
+            # works on BP — that's why container labels are default-on for
+            # the toolkit (BP is the documented licensing floor).
+            if ($containerLabelsInScope) {
+                Write-Host "  Container labels (Group.Unified EnableMIPLabels): enabled (default)." -ForegroundColor Green
                 Write-Host "  Rationale: BP includes Entra ID P1+, which is the AAD-side requirement for container labels." -ForegroundColor DarkGray
+                Write-Host "  (To opt out, re-run with -SkipContainerLabels.)" -ForegroundColor DarkGray
             }
             if (-not $BPOnly) {
                 $BPOnly = $true
@@ -645,7 +681,15 @@ if ($wantGraphForAutoDetect) {
         'Other' {
             $skuList = if ($tier.PartNumbers) { $tier.PartNumbers -join ', ' } else { '(none)' }
             Write-Host ("  Tenant SKUs: {0}" -f $skuList) -ForegroundColor DarkGray
-            Write-Host "  No E5 / Purview Suite SKU detected; container labels not auto-enabled." -ForegroundColor DarkGray
+            # No recognised BP/E5/Purview Suite SKU → we can't trust Entra ID P1
+            # is present, so flip container labels OFF to avoid a Graph 403 /
+            # "tenant lacks required license" failure in step [5/5].
+            if ($containerLabelsInScope) {
+                $SkipContainerLabels = $true
+                Write-Host "  Auto-skipping: Container labels (Group.Unified EnableMIPLabels)." -ForegroundColor Yellow
+                Write-Host "  Rationale: no M365 BP/E5/Purview Suite SKU detected; cannot verify Entra ID P1 (the AAD-side requirement)." -ForegroundColor DarkGray
+                Write-Host "  (To override, re-run with -NoLicenseAutoDetect — assumes the tenant has standalone Entra ID P1 / EMS.)" -ForegroundColor DarkGray
+            }
             if (-not $BPOnly) {
                 $BPOnly = $true
                 Write-Host "  Auto-enabling -BPOnly (no E5/Purview-Suite SKU detected): E5-only DLP workloads will be SKIPPED with a warning, not attempted." -ForegroundColor Yellow
@@ -655,7 +699,7 @@ if ($wantGraphForAutoDetect) {
         default {
             Write-Host "  Could not classify tenant license tier." -ForegroundColor DarkYellow
             if ($tier.Reason) { Write-Host "  Reason: $($tier.Reason)" -ForegroundColor DarkYellow }
-            Write-Host "  Pass -EnableContainerLabels manually if eligible." -ForegroundColor DarkYellow
+            Write-Host "  Container labels will run anyway (default); pass -SkipContainerLabels to opt out." -ForegroundColor DarkYellow
         }
     }
 }
@@ -663,33 +707,12 @@ if ($wantGraphForAutoDetect) {
 # ---------------------------------------------------------------------------
 # Graph scope extension after auto-detect promotion (least-privilege)
 # ---------------------------------------------------------------------------
-# If license auto-detect just flipped $EnableContainerLabels on, the initial
-# Graph connect did NOT request 'Directory.ReadWrite.All' (we only asked
-# for 'Organization.Read.All'). Extend consent NOW, before Setup-TenantSettings
-# tries to read /directorySettingTemplates and write via New-/Update-MgBetaDirectorySetting.
-# The Graph SDK is happy to add scopes incrementally — already-consented users see no prompt.
-#
-# NOTE: Directory.ReadWrite.All is the historically-consented, known-working
-# scope for /directorySettingTemplates and /settings on most tenants. We
-# experimented with the narrower GroupSettings.ReadWrite.All but it caused
-# 403 Authorization_RequestDenied where admins had only ever consented to
-# Directory.ReadWrite.All.
-if ($EnableContainerLabels -and `
-    $connectArgs.ContainsKey('ConnectGraph') -and `
-    ('Directory.ReadWrite.All' -notin $graphScopes)) {
-
-    $graphScopes = @($graphScopes + 'Directory.ReadWrite.All')
-    Write-Host "`n--- Extending Graph consent ---" -ForegroundColor White
-    Write-Host "  Auto-detect promoted -EnableContainerLabels; extending Graph scope to include 'Directory.ReadWrite.All' (needed to read /directorySettingTemplates and write Group.Unified)." -ForegroundColor DarkGray
-    try {
-        $targetTid = if ($DelegatedOrganization) { $DelegatedOrganization } else { ($TenantAdminUpn -split '@')[-1] }
-        Connect-MgGraph -TenantId $targetTid -Scopes $graphScopes -NoWelcome -ErrorAction Stop
-        Write-Host ("  Graph scopes now: {0}" -f ($graphScopes -join ', ')) -ForegroundColor DarkGray
-    } catch {
-        Write-Warning ("Could not extend Graph scope to include 'Directory.ReadWrite.All': {0}" -f $_.Exception.Message)
-        Write-Warning "Container-label setup ([5/5] in Tenant settings) may fail with an authorization error. To skip the prompt, re-run with -EnableContainerLabels passed explicitly so the scope is requested upfront."
-    }
-}
+# Graph scope is now requested UPFRONT (Directory.ReadWrite.All is included
+# in the first Connect-MgGraph whenever container labels are in scope).
+# Previously this block extended consent AFTER license auto-detect flipped
+# $EnableContainerLabels — that path no longer exists (container labels are
+# default-on for everyone, license auto-detect only flips them OFF for the
+# 'Other' tier). Block removed; nothing to do here.
 
 # ---------------------------------------------------------------------------
 # Tenant identity confirmation (PR1 — Jim's feedback)
@@ -866,7 +889,7 @@ if (-not $SkipTenantSettings) {
     Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Module start' -Status 'Started'
     try {
         $taskArgs = @{ Config = $config }
-        if ($EnableContainerLabels) { $taskArgs['EnableContainerLabels'] = $true }
+        if ($SkipContainerLabels)   { $taskArgs['SkipContainerLabels']   = $true }
         if ($EnablePremiumAudit)    { $taskArgs['EnablePremiumAudit']    = $true; $taskArgs['PremiumAuditMailbox'] = $PremiumAuditMailbox }
         if ($NonInteractive)        { $taskArgs['NonInteractive']        = $true }
         & $tenantScript @taskArgs
