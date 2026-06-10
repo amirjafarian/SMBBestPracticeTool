@@ -11,3 +11,9 @@ Products/**/AdHoc/*
 
 # VS Code workspace settings — personal/machine-specific
 .vscode/
+
+# Per-module Copilot "skill" files. Local-only by design: each file captures
+# the full conversation/decision history for one module so future AI runs can
+# regenerate the module from scratch. Treat the folder as personal/shareable
+# — copy or zip it out of the repo to share, never commit it.
+Skills/

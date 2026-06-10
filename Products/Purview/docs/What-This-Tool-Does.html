@@ -238,8 +238,8 @@
   <div class="grid">
     <div class="card on">
       <h3>1. Tenant settings <span class="tag on">Default</span></h3>
-      <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels, label co-authoring.</p>
-      <p class="meta"><span class="tag opt">-EnableContainerLabels</span> <span class="tag opt">-EnablePremiumAudit</span></p>
+      <p>Foundational on/off switches: unified audit log, AIP&times;SPO integration, PDF labels.</p>
+      <p class="meta"><span class="tag auto">-EnableContainerLabels</span> auto-on for E5 / Purview Suite / Business Premium &middot; <span class="tag opt">-EnablePremiumAudit</span></p>
     </div>
     <div class="card on">
       <h3>2. Sensitivity labels <span class="tag on">Default</span></h3>
@@ -276,10 +276,10 @@
         <td>Lets SPO/OneDrive open, index and search content encrypted by sensitivity labels.</td></tr>
       <tr><td>Sensitivity label for PDF</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
         <td>Office can apply (and persist) sensitivity labels when saving as PDF.</td></tr>
-      <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag on">Default</span></td>
-        <td>Tenant-wide flag that allows multiple users to edit encrypted Office files at once.</td></tr>
-      <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag opt">-EnableContainerLabels</span></td>
-        <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Off by default.</strong></td></tr>
+      <tr><td>Label co-authoring</td><td><code>Enabled</code></td><td><span class="tag opt">-EnableLabelCoAuthoring</span></td>
+        <td>Tenant-wide switch that lets multiple users edit encrypted Office files at once. <strong>One-way change</strong> &mdash; disabling it later loses labels on unencrypted Office files, breaks third-party tools that read labels from the old metadata location (AIP scanner &lt; v3.0, OneDrive sync &lt; 19.002, MIP SDK &lt; 1.7, custom DLP scanners, custom Exchange mail-flow rules). <strong>Off by default.</strong></td></tr>
+      <tr><td>Container labels (Teams / Sites / Groups)</td><td><code>Group.Unified.EnableMIPLabels</code></td><td><span class="tag auto">Auto-detected</span></td>
+        <td>Lets sensitivity labels be applied to M365 Groups, Teams and SharePoint sites. Requires Microsoft Graph beta consent. <strong>Auto-enabled on M365 E5 / Purview Suite / Business Premium tenants</strong> (license auto-detect). Pass <code>-NoLicenseAutoDetect</code> or <code>-BPOnly</code> to opt out; pass <code>-EnableContainerLabels</code> to force-on for tenants the detector cannot classify.</td></tr>
       <tr><td>Premium audit (mailbox SearchQueryInitiated)</td><td><code>per-mailbox</code></td><td><span class="tag opt">-EnablePremiumAudit</span></td>
         <td>Adds the SearchQueryInitiated audit event to nominated mailboxes. Requires E5 / Audit (Premium) licensing.</td></tr>
     </tbody>
@@ -301,11 +301,19 @@
     the deployment baseline.
   </p>
 
+  <p style="margin-top:6px;color:var(--muted);font-size:13px">
+    The colored dot beside each label name matches the per-label
+    <code>Color</code> the script writes to the label (with drift correction
+    on re-run). Operators see this same color in the Purview portal and end
+    users see it on the <strong>Sensitivity</strong> button in Word, Excel,
+    PowerPoint and Outlook.
+  </p>
+
   <div class="labels" aria-label="Sensitivity label hierarchy">
 
     <div class="label-row">
       <div class="pri">1</div>
-      <div class="name">Public
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#13A10E;margin-right:8px;vertical-align:middle"></span>Public
         <small>Business data approved for public consumption. No protection.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -319,7 +327,7 @@
 
     <div class="label-row">
       <div class="pri">2</div>
-      <div class="name">General
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3A96DD;margin-right:8px;vertical-align:middle"></span>General
         <small>Internal data, may be shared with external partners. No protection. <strong>Default for new email.</strong></small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -333,7 +341,7 @@
 
     <div class="label-row">
       <div class="pri">3</div>
-      <div class="name">Confidential
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential
         <small>Parent only &mdash; users pick one of the three sub-labels below.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -346,7 +354,7 @@
     </div>
     <div class="label-row child">
       <div class="pri">4</div>
-      <div class="name">Confidential &mdash; All Employees
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; All Employees
         <small>Footer marking "Classified as Confidential". <strong>Default for new documents.</strong></small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -359,8 +367,8 @@
     </div>
     <div class="label-row child">
       <div class="pri">5</div>
-      <div class="name">Confidential &mdash; Specific People
-        <small>Footer only. User chooses recipients at apply time.</small>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; Specific People
+        <small>User-defined encryption &mdash; Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients at apply time. Footer marking added.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
@@ -368,11 +376,11 @@
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span></div>
+      <div class="tags"><span class="tag on">Encryption (user-defined)</span><span class="tag on">Footer</span></div>
     </div>
     <div class="label-row child">
       <div class="pri">6</div>
-      <div class="name">Confidential &mdash; Internal Exception
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; Internal Exception
         <small>Footer only. Business-justified internal-only communication.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -386,7 +394,7 @@
 
     <div class="label-row">
       <div class="pri">7</div>
-      <div class="name">Highly Confidential
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential
         <small>Parent. Adds watermark "HIGHLY CONFIDENTIAL" to all sub-labels.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -399,8 +407,8 @@
     </div>
     <div class="label-row child">
       <div class="pri">8</div>
-      <div class="name">Highly Confidential &mdash; All Employees
-        <small>Encrypted with the tenant-wide rights template. All staff can view, edit and reply.</small>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; All Employees
+        <small>Encrypted with a per-label <em>Co-Author</em> rights bundle scoped to your tenant. All staff can view, edit, save, copy, print, allow macros, reply and forward &mdash; wider than the global <em>Reviewer</em> default so Office co-authoring and Microsoft Search work cleanly.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
@@ -412,7 +420,7 @@
     </div>
     <div class="label-row child">
       <div class="pri">9</div>
-      <div class="name">Highly Confidential &mdash; Specific People
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; Specific People
         <small>User-defined encryption. Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -425,7 +433,7 @@
     </div>
     <div class="label-row child">
       <div class="pri">10</div>
-      <div class="name">Highly Confidential &mdash; Internal Exception
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; Internal Exception
         <small>Encrypted, all-employees rights. Cannot leave the tenant.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -443,9 +451,13 @@
     <div>
       <strong>Rights bundle:</strong> by default encrypted labels grant Microsoft's
       <em>Reviewer</em> bundle (View, Edit, Save, Reply, Reply All, Forward).
-      Pass <code>-EnableCoAuth</code> to use the full <em>Co-Author</em> bundle (adds
-      Copy, Print, Allow Macros) &mdash; required for Office co-authoring and any third-party
-      tool that reads doc metadata via the Office object model.
+      <strong>Highly Confidential &mdash; All Employees overrides this</strong> with the
+      wider <em>Co-Author</em> bundle (adds Copy, Print, Allow Macros &mdash;
+      needed for Office co-authoring and any third-party tool that reads doc
+      metadata via the Office object model). Each label can declare its own
+      <code>EncryptionRightsDefinitions</code> in <code>PurviewConfig.psd1</code>;
+      labels without an override fall back to the global default. Edit either
+      and validate in a pilot tenant before rolling out.
     </div>
   </div>
   <div class="note opt">

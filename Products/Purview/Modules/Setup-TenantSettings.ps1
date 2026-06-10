@@ -359,41 +359,61 @@ if ($spoAvailable -and $settings.EnableSensitivityLabelForPDF) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Office co-authoring with sensitivity labels
+# 4. Label co-authoring metadata-format switch
+#    (Set-PolicyConfig -EnableLabelCoauth)
 #
-# LICENSING: NOT an E5-only feature. Co-authoring on labeled/encrypted Office
-# files is part of the standard sensitivity-labels capability available in
-# Microsoft 365 Business Premium, E3, E5, A3, A5, F3, AIP P1, AIP P2 (per the
-# Microsoft Purview service description). That's why this step runs
-# unconditionally for every tier the toolkit supports — do not add an E5/
-# Purview-Suite gate here. The E5-only label feature is container labels
-# (step [5/5], gated by -EnableContainerLabels), not co-authoring.
+# SAFETY (THIS IS WHY IT'S OPT-IN, NOT LICENSING):
+#   This switch is ONE-WAY in practice. Enabling it moves sensitivity-label
+#   metadata out of the old custom-properties location and into the new
+#   embedded location. Once flipped:
+#     * Disabling it later REMOVES the new-location metadata; unencrypted
+#       Word / Excel / PowerPoint files lose their labels entirely.
+#     * It cannot be disabled via the Purview portal — PowerShell only.
+#     * Any app, service, scanner or script that reads or writes labels
+#       from the OLD location will break: AIP scanner < v3.0, OneDrive sync
+#       < 19.002, MIP SDK < 1.7, custom Exchange mail-flow rules that look
+#       up labels from old-location metadata, custom DLP scanners, etc.
+#
+# Because the toolkit runs on partner tenants where we cannot enumerate
+# every third-party integration the customer relies on, this step is
+# DEFAULT-OFF in PurviewConfig.psd1 and the operator opts in explicitly
+# via -EnableLabelCoAuthoring on Deploy-PurviewBestPractice.ps1. Do not
+# remove this gate.
+#
+# LICENSING: not an E5-only feature; included in Business Premium, E3,
+# E5, A3, A5, F3, AIP P1/P2. License is not the reason this is opt-in.
+#
 # Ref: https://learn.microsoft.com/purview/sensitivity-labels-coauthoring
 # ---------------------------------------------------------------------------
 if ($settings.EnableLabelCoAuth) {
-    Write-Host "[4/5] Label co-authoring (Set-PolicyConfig)..." -ForegroundColor Cyan
+    Write-Host "[4/5] Label co-authoring (Set-PolicyConfig — one-way switch)..." -ForegroundColor Cyan
 
-    if ($PSCmdlet.ShouldProcess('Tenant', 'Enable label co-authoring')) {
-        # Set-PolicyConfig -EnableLabelCoauth:$true is idempotent and has NO
-        # prereq on EnableSpoAipMigration in a normal Business-Premium / E3 /
-        # E5 tenant. See the big warning block at the top of this file —
-        # EnableSpoAipMigration is a legacy on-prem AIP migration flag, not a
-        # prereq for label co-authoring. Do not gate this step on it.
-        #
-        # -WarningAction SilentlyContinue suppresses the cosmetic
-        # "command completed successfully but no settings ... have been modified"
-        # warning that fires when the setting is already in the desired state.
+    if ($PSCmdlet.ShouldProcess('Tenant', 'Enable label co-authoring (irreversible metadata format change)')) {
+        # Set-PolicyConfig -EnableLabelCoauth:$true is idempotent on re-runs
+        # of an already-enabled tenant, but the first flip is one-way (see
+        # the safety comment above). -WarningAction SilentlyContinue
+        # suppresses the cosmetic "command completed successfully but no
+        # settings ... have been modified" warning that fires when the
+        # setting is already in the desired state.
         try {
             Invoke-WithTransientRetry -Description 'Set-PolicyConfig -EnableLabelCoauth' -Action {
                 Set-PolicyConfig -EnableLabelCoauth:$true -WarningAction SilentlyContinue -ErrorAction Stop
             } | Out-Null
             Write-Host "      Enabled (idempotent re-apply)." -ForegroundColor Green
+            Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Set-PolicyConfig EnableLabelCoauth' -Target 'Tenant' -Status 'Updated' -Detail 'Tenant-wide label co-authoring enabled (one-way switch — confirmed via -EnableLabelCoAuthoring opt-in).'
         } catch {
             Write-Warning "      Set-PolicyConfig failed after retries: $($_.Exception.Message)"
+            Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Set-PolicyConfig EnableLabelCoauth' -Target 'Tenant' -Status 'Failed' -Detail $_.Exception.Message -Error $_.Exception
         }
     }
 } else {
-    Write-Host "[4/5] Label co-authoring: skipped." -ForegroundColor DarkGray
+    # SKIP-PATH SENTINEL: surface every disposition in the report
+    # (Skills/_CONVENTIONS.md §3 / Skills/Purview/_CONVENTIONS.md §1).
+    # If a future change silently reverts the opt-in gate (e.g. flips the
+    # config default back on or stops honouring -EnableLabelCoAuthoring),
+    # the absence of this Skipped entry across BP runs will tell us.
+    Write-Host "[4/5] Label co-authoring: skipped (-EnableLabelCoAuthoring not set; this is a one-way tenant change — see help)." -ForegroundColor DarkGray
+    Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Set-PolicyConfig EnableLabelCoauth' -Target 'Tenant' -Status 'Skipped' -Detail 'EnableLabelCoAuth=$false in config; -EnableLabelCoAuthoring not passed. Tenant-wide co-authoring metadata-format switch left at current value. This is the safe default — see PurviewConfig.psd1 comment and https://learn.microsoft.com/purview/sensitivity-labels-coauthoring.'
 }
 
 # ---------------------------------------------------------------------------
@@ -447,7 +467,12 @@ if ($EnableContainerLabels) {
         }
     }
 } else {
+    # Surface this in the run log too — earlier versions only printed to host,
+    # so when container labels silently went missing from a BP run (e.g. after
+    # a regression in the license auto-detect) the HTML/JSON report had no
+    # evidence the step was even considered. Now every run records the skip.
     Write-Host "[5/5] Container labels: skipped (-EnableContainerLabels not set)." -ForegroundColor DarkGray
+    Add-RunLogEntry -Module 'Setup-TenantSettings' -Action 'Group.Unified EnableMIPLabels' -Target 'AAD directory setting' -Status 'Skipped' -Detail '-EnableContainerLabels not set; container labels for Teams / M365 Groups / SharePoint sites not enabled. Pass -EnableContainerLabels explicitly or run on an E5 / Purview Suite / Business Premium tenant to auto-enable.'
 }
 
 # ---------------------------------------------------------------------------

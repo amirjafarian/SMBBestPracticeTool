@@ -46,8 +46,8 @@ Security Best Practice Deployment" guide for Business Premium.
 
 | # | Task                | Default state                                                                                                        |
 |---|---------------------|----------------------------------------------------------------------------------------------------------------------|
-| 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling, label co-authoring                             |
-| 2 | **Sensitivity labels** | Creates `Personal`, `Public`, `General`, `Confidential` (with `AllEmployees` sub-label), `Highly Confidential`. Encryption applied to `Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` (Co-Author rights for `AuthenticatedUsers` — internal-only). Labels ordered, then published with `General` as the default. |
+| 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling                             |
+| 2 | **Sensitivity labels** | Creates `Public`, `General`, `Confidential` (parent + 3 sub-labels), `Highly Confidential` (parent + 3 sub-labels). Encryption: `Highly Confidential\All Employees` uses Co-Author rights, `Highly Confidential\Internal Exception` + `Confidential\Specific People` + `Highly Confidential\Specific People` use Reviewer / UserDefined; all rights scoped to your tenant only via `{TenantDomain}`. Labels ordered, then published with `General` as the email default. |
 | 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
 | 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
@@ -76,7 +76,7 @@ baseline. Some optional features require a higher SKU:
 | DLP for SharePoint + OneDrive                             | Business Premium                      | Always on                              |
 | Retention policies (Exchange)                             | Business Premium                      | Always on                              |
 | Unified audit log (standard, 90-day retention)            | Business Premium                      | Always on                              |
-| Container labels (Group.Unified `EnableMIPLabels`)        | E5 / Purview Suite (also AAD P1+)     | Opt-in via `-EnableContainerLabels`    |
+| Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Auto-on on Business Premium / E5 / Purview Suite (opt out with `-NoLicenseAutoDetect`); switch is `-EnableContainerLabels` |
 | Premium Audit (1-year retention, `SearchQueryInitiated`)  | E5 / Audit (Premium) add-on           | Opt-in via `-EnablePremiumAudit`       |
 | Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
 | DLP for Defender for Cloud Apps / on-prem / Power BI      | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
@@ -148,6 +148,222 @@ Then run the toolkit from a `pwsh` prompt (not `powershell`). The
 `Microsoft.Online.SharePoint.PowerShell` module is loaded via
 `Import-Module -UseWindowsPowerShell` automatically when running under PS 7,
 so no separate PS 5.1 step is needed.
+
+### Sign-in prompts (WAM broker)
+
+Each customer-tenant deploy needs sign-in tokens for up to four services
+(Exchange Online, Security & Compliance / IPPS, SharePoint Online, Microsoft
+Graph). The first run on a new admin account therefore shows several prompts.
+On subsequent runs the **Windows Authentication Manager (WAM) broker** turns
+most of those into single-click "Continue" confirmations instead of full
+browser sign-ins.
+
+WAM is on by default in current PowerShell modules
+(`Microsoft.Graph.Authentication` 2.x and `ExchangeOnlineManagement` 3.3+)
+when **all** of the following are true:
+
+| Requirement | Why |
+|---|---|
+| Running on **Windows 10 1507 (build 10240)** or later, or **Windows Server 2019 (build 17763)** or later | WAM is a Windows-only OS component. |
+| `pwsh.exe` was launched in your normal **interactive** desktop session (no RunAs, no scheduled task / SYSTEM, no SSH/remote PowerShell) | WAM uses the desktop user's signed-in tokens. |
+| `Microsoft.Graph.Authentication` ≥ 2.0 and `ExchangeOnlineManagement` ≥ 3.3 are installed | Older versions don't have WAM integration. Refresh with `Update-Module`. |
+
+The connect helper checks all of these at start-up and warns when WAM is not
+available — `Get-PurviewRunLog` records the result as a
+`SessionGuard:Startup` entry with `reason=wam-ready` or `wam-not-ready` plus
+the diagnostic fields it inspected.
+
+Even when WAM is available, the following still cause additional prompts:
+
+* **First-time consent** — granting `Organization.Read.All` (or
+  `Directory.ReadWrite.All` for container labels) on a new tenant always
+  shows the full consent screen once.
+* **GDAP tenant switches** — the Graph guard reauths when it detects the
+  cached session belongs to a different customer tenant
+  (`reason=tenant-domain-mismatch` in the run log).
+* **Missing scopes** — adding a new scope to an existing cached session
+  triggers a re-consent prompt (`reason=missing-scopes`).
+* **SharePoint Online** — `Connect-SPOService` does not expose WAM, so the
+  SPO connect always uses its own MSAL flow.
+
+When you see more prompts than expected, run
+`Get-PurviewRunLog | Where-Object Action -like 'SessionGuard:*'` after the
+deploy — every prompt is preceded by a structured log entry that names
+which check failed and what was expected vs observed.
+
+### MSAL DLL mismatch (Connect-MgGraph 'Method not found')
+
+`ExchangeOnlineManagement` and `Microsoft.Graph.Authentication` each ship
+their own copy of `Microsoft.Identity.Client.dll` (MSAL) under their module
+folders. When both modules are imported into the same PowerShell process,
+the CLR binds to whichever copy was loaded FIRST and ignores the other.
+
+If the two modules were compiled against different MSAL versions and a
+method signature changed between them (a recurring source of breakage in
+MSAL 4.x — e.g. `BaseAbstractApplicationBuilder<T>.WithLogging(IIdentity
+Logger, Boolean)` moved between 4.82 and 4.83), `Connect-MgGraph` throws:
+
+```text
+InteractiveBrowserCredential authentication failed:
+Method not found: '!0 Microsoft.Identity.Client.<X>.<Method>(...)'.
+```
+
+That message reads like an auth failure but is purely a DLL-binding
+mismatch — no credential / scope / tenant change will fix it.
+
+**Detection.** The connect helper runs `Test-MsalDllCompatibility` at
+start-up: it locates the `Microsoft.Identity.Client.dll` bundled by each
+module (PS edition-aware: `netCore` / `Dependencies\Core` on PS 7,
+`netFramework` / `Dependencies\Desktop` on PS 5.1), reads each DLL's
+`FileVersion`, and also checks whether MSAL is already loaded in the
+process. The outcome is logged as a `SessionGuard:Startup` entry with
+`reason=msal-aligned` or `msal-mismatch` plus the DLL paths/versions.
+
+**Mitigation 1: Graph-first connect order.** The connect helper imports
+`Microsoft.Graph.Authentication` and calls `Connect-MgGraph` **before**
+`Connect-ExchangeOnline`, mirroring the pattern used by
+[`microsoft/zerotrustassessment`](https://github.com/microsoft/zerotrustassessment/blob/main/src/powershell/public/Connect-ZtAssessment.ps1).
+When Microsoft Graph loads its bundled MSAL into the AppDomain first,
+`Connect-MgGraph` no longer throws `Method not found`. Verified
+end-to-end on EXO 3.10.0 + Microsoft.Graph.Authentication 2.37.0 (which
+ship MSAL 4.83.1.0 and 4.82.1.0 respectively).
+
+**Mitigation 2: `-DisableWAM` for Exchange Online / IPPS.** Connecting
+Graph first solves the `Connect-MgGraph` failure but introduces a new
+problem: when `Connect-ExchangeOnline` runs against Graph's older
+MSAL 4.82, EXO 3.10's WAM (Windows Account Manager) broker code path
+throws:
+
+```text
+System.NullReferenceException: Object reference not set to an instance of an object.
+   at Microsoft.Identity.Client.Platforms.Features.RuntimeBroker.RuntimeBroker..ctor(...)
+```
+
+EXO's WAM `RuntimeBroker` constructor expects MSAL 4.83's surface, and
+the older MSAL doesn't satisfy it. When the helper's pre-flight check
+detects a mismatch (`SessionGuard:Startup reason=msal-mismatch`), it
+automatically passes `-DisableWAM` to both `Connect-ExchangeOnline` and
+`Connect-IPPSSession`. WAM is bypassed in favour of the standard
+interactive browser flow, which doesn't invoke `RuntimeBroker`. The
+operator still gets a one-click browser sign-in via the system default
+browser; only the WAM 1-click pop-up is suppressed. Logged as
+`SessionGuard:EXO/IPPS reason=disable-wam-msal-mismatch`. Auto-disables
+the moment the bundled MSAL versions realign (WAM returns automatically).
+
+> **What about `-UseDeviceCode` for Graph?** Doesn't help — Graph 2.37's
+> `DeviceCodeCredential` and `InteractiveBrowserCredential` constructors
+> both invoke the same broken MSAL method overload, so switching auth
+> flow doesn't change the JIT lookup. `microsoft/zerotrustassessment`
+> has the same `#TODO: UseDeviceCode does not work with ExchangeOnline`
+> caveat for the EXO side.
+
+> **What about pre-loading Graph's older MSAL?** Doesn't work either.
+> `ExchangeOnlineManagement` 3.10's module manifest strong-binds to its
+> bundled MSAL 4.83.1.0, so pre-loading Graph's 4.82.1.0 with
+> `[Reflection.Assembly]::LoadFrom` causes `Connect-ExchangeOnline` to
+> throw `FileLoadException: manifest does not match` (HRESULT
+> 0x80131040).
+
+**Manual fallback — restart PowerShell.** If another module loaded MSAL
+into the process *before* this script started running (e.g. you ran
+`Connect-ExchangeOnline` manually, or imported `Az.*`, `PnP.PowerShell`,
+or `Microsoft.Graph.*` first), neither mitigation can help — .NET
+cannot swap a loaded assembly. The connect helper detects this in its
+pre-flight check (`loadedMsalVersion` is set in the
+`SessionGuard:Startup` entry) and tells the operator to:
+
+1. **Close** the PowerShell window.
+2. **Open a fresh `pwsh`** with no other Microsoft modules pre-imported.
+3. **Re-run** the script.
+
+If `Connect-MgGraph` still throws `Method not found: 'Microsoft.Identity…'`,
+the helper catches the `MissingMethodException` and emits restart-pwsh
+guidance with `SessionGuard:Graph reason=msal-method-not-found-restart-pwsh`.
+Same for an EXO `NullReferenceException` in `RuntimeBroker` —
+`SessionGuard:EXO reason=wam-runtimebroker-nullref`.
+
+**Last resort — pin a matching EXO/Graph pair.** Microsoft realigns the
+bundled MSAL versions between releases, so updating both modules with
+`Update-Module ExchangeOnlineManagement -Force; Update-Module Microsoft.Graph.Authentication -Force`
+will eventually close the gap. At the time of writing, no shipped
+`ExchangeOnlineManagement` version on PSGallery bundles the same MSAL
+as `Microsoft.Graph.Authentication` 2.37.0 (`4.82.1.0`) — EXO
+3.8/3.9.0/3.9.2/3.10 ship 4.66.1/4.68.0/4.74.1/4.83.1 respectively — so
+this fallback is rarely useful today. If you do want to try pinning a
+matching pair manually:
+
+```powershell
+# Find an installed EXO version whose MSAL DLL matches Graph's
+Get-Module ExchangeOnlineManagement -ListAvailable | ForEach-Object {
+    $dll = Get-ChildItem $_.ModuleBase -Filter Microsoft.Identity.Client.dll -Recurse |
+           Where-Object FullName -match 'netCore' | Select-Object -First 1
+    [pscustomobject]@{
+        EXO  = $_.Version
+        MSAL = if ($dll) { $dll.VersionInfo.FileVersion } else { '(none)' }
+    }
+}
+
+# Then pin in a fresh window before running the script:
+Import-Module ExchangeOnlineManagement -RequiredVersion <picked> -Force
+```
+
+The Graph-first connect order + auto `-DisableWAM` for EXO/IPPS is the
+primary fix; the pwsh-restart is the only reliable manual fallback when
+MSAL is already loaded with the wrong version.
+
+### Microsoft.Graph.Beta sub-module version pin (`Assembly with same name is already loaded`)
+
+After updating `Microsoft.Graph.Authentication` (e.g. to fix the MSAL
+mismatch above) the deployment can later fail at **step [5/5] container
+labels** with:
+
+```
+The 'Get-MgBetaDirectorySetting' command was found in the module
+'Microsoft.Graph.Beta.Identity.DirectoryManagement', but the module could
+not be loaded due to the following error: [Could not load file or
+assembly 'Microsoft.Graph.Authentication, Version=2.36.1.0, …'.
+Assembly with same name is already loaded]
+```
+
+**Why it happens.** Every `Microsoft.Graph.Beta.*` sub-module's manifest
+strict-pins `Microsoft.Graph.Authentication` to an **exact** version in
+`RequiredModules` (not a minimum). When you update `Authentication` to a
+newer version without also updating the matching Beta sub-modules,
+PowerShell tries to load the older Auth version that Beta requires, but
+the newer Auth is already in the AppDomain — only one version of an
+assembly can be loaded per AppDomain, so `Import-Module` throws.
+
+**Auto-detect + self-heal.** The connect helper runs `Test-GraphBetaCompat`
+in the pre-flight (just before importing the Beta sub-module). It
+compares the Beta module's `RequiredModules` pin against the loaded /
+installed `Microsoft.Graph.Authentication` version and:
+
+* When the pin matches: logs `SessionGuard:GraphBeta version-pin-aligned`
+  and force-imports the matching version via `Import-Module
+  -RequiredVersion` (so the pick is deterministic even with multiple
+  Beta versions installed side-by-side).
+* When the pin **does not** match: **unconditionally** installs the
+  matching Beta version side-by-side
+  (`Install-Module … -RequiredVersion <auth> -Scope CurrentUser -Force
+  -AllowClobber`), re-validates, then force-imports it. No
+  `-AutoInstallModules` flag is required — this is a deterministic,
+  non-destructive recovery (one specific sub-module version, installed
+  side-by-side; existing versions are untouched). Matches the existing
+  PSGallery trust restore pattern.
+* If `Install-Module` fails (PSGallery unreachable, locked-down
+  environment, etc.): fails fast at pre-flight with the exact
+  `Install-Module` command to run manually. Operators in CLM /
+  no-internet environments can pre-pin the matching Beta version before
+  running the script.
+
+Log keys: `version-pin-aligned`, `version-pin-mismatch`,
+`auto-installed-matching-version`, `auto-install-failed`,
+`imported-matching-version`, `no-matching-version-installed`.
+
+**Manual fix.** If you don't want the auto-install, run
+`Update-Module Microsoft.Graph.Beta -Force` (updates the whole family in
+one shot) or the targeted `Install-Module` printed in the warning, then
+re-run the deploy.
 
 ---
 
@@ -268,26 +484,62 @@ The most common customisations:
 
 ---
 
-## Encryption rights — what `AuthenticatedUsers` means
+## Encryption rights — tenant-scoped by default
 
-`Confidential`, `Confidential\AllEmployees`, and `Highly Confidential` apply
-encryption with these usage rights to the special identity
-`AuthenticatedUsers`:
+Two encrypting Template-protected labels apply usage rights:
 
-```
-VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, PRINT, EXTRACT, REPLY, REPLYALL,
-FORWARD, OBJMODEL
-```
+* **`Highly Confidential \ All Employees`** — uses Microsoft's wider
+  **Co-Author** bundle (per-label override):
 
-This bundle equates to **Co-Author** in the Microsoft documentation. The
-identity `AuthenticatedUsers` includes signed-in internal users plus B2B
-guests, social/MSA accounts, and one-time-passcode (OTP) users — so it is
-**not an internal-only scope**.
+  ```
+  VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, EXTRACT, PRINT, OBJMODEL, REPLY, REPLYALL, FORWARD
+  ```
 
-If you need an internal-employees-only scope, replace `AuthenticatedUsers` in
-`EncryptionRightsDefinitions` / `EncryptionRightsDefinitionsCoAuth` with a
-Microsoft 365 group whose dynamic membership is scoped to
-`user.userType -eq "Member"`. Validate in a pilot tenant before rolling out.
+  Co-Author adds **EXTRACT** (copy), **PRINT**, and **OBJMODEL** (Office
+  object-model access — needed for macros and simultaneous editing).
+  Granting OBJMODEL is **necessary but not sufficient** for Office
+  multi-user co-authoring on encrypted files: the tenant-wide switch
+  `Set-PolicyConfig -EnableLabelCoauth:$true` (toolkit param
+  `-EnableLabelCoAuthoring`, opt-in) must also be on.
+
+* **`Highly Confidential \ Internal Exception`** — uses the global
+  default **Reviewer** bundle (no Copy, no Print, no OBJMODEL):
+
+  ```
+  VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
+  ```
+
+The global default applies to any Template-encrypted label that does
+NOT carry a per-label `EncryptionRightsDefinitions` field. To change
+the default, edit `EncryptionRightsDefinitions` in
+`PurviewConfig.psd1`. To override for a specific label, add an
+`EncryptionRightsDefinitions = '...'` field on that label hashtable
+(same token semantics as the global default).
+
+The rights are scoped to **all users in your tenant only** via the
+`{TenantDomain}` token at the start of `EncryptionRightsDefinitions`. At
+run time the toolkit resolves the token against your auto-discovered
+tenant identity (default verified domain, falling back to your initial
+`*.onmicrosoft.com`). Per Entra rights-management semantics, ANY verified
+domain expands to ALL verified domains in the tenant — so specifying one
+is enough to cover the whole tenant, and it explicitly EXCLUDES external
+`AuthenticatedUsers` from other Microsoft 365 tenants, B2B guests
+attached to other tenants, social/MSA accounts, and OTP users.
+
+If you intentionally need the broader cross-tenant scope (e.g. you
+collaborate via the label with partner organizations that do NOT yet have
+a B2B trust into your tenant), edit `EncryptionRightsDefinitions` to use
+`{AuthenticatedUsers}` (or the literal `AuthenticatedUsers`) and document
+the decision. The toolkit refuses to silently fall back to that scope —
+if the `{TenantDomain}` token cannot be resolved (no Graph/EXO identity),
+the labels module aborts with an actionable error.
+
+> **Retroactive scope changes only apply to NEW labelling.** Existing
+> protected files carry the use-license they had at the moment of
+> labelling. Tightening the rights bundle does NOT retroactively revoke
+> external access to files that were already labelled and shared. To
+> tighten retroactively, re-label / re-protect the affected files. See
+> [`docs/Change-Management-Playbook.md`](docs/Change-Management-Playbook.md#known-sharp-edges).
 
 ---
 
@@ -299,8 +551,9 @@ conversation. Full detail and mitigations are in
 
 | Sharp edge | Default behaviour | Why it matters |
 |---|---|---|
-| **`AuthenticatedUsers` ≠ internal only** | The 3 encrypting labels grant rights to every authenticated user in the tenant. | B2B guests (accountants / lawyers / MSPs invited as guests) **can read protected files**. Audit the guest list first. |
+| **Encrypted-label scope = your tenant only (not retroactive)** | The two Template-encrypted HC sub-labels grant rights to all users in your tenant via the `{TenantDomain}` token. | Files labelled BEFORE this toolkit ran (or before you tightened the scope) keep their old rights — re-label them if you need the new scope applied. B2B guests from OTHER tenants are excluded by default; if you need cross-tenant collaboration, switch to `{AuthenticatedUsers}` deliberately. |
 | **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
+| **`Confidential\Specific People` also prompts users** | UserDefined encryption — Outlook auto-applies Do Not Forward; Office desktop apps prompt the recipient list. | Same usability caveat as the HC variant. **Not** published by default. Encryption is enforced once published. |
 | **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set when `-EnableContainerLabels` is passed (or auto-detected on E5). | Microsoft does not officially support reverting. Treat the switch as decision-grade. |
 | **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
 | **7-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 7 years. | Aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC), but still wrong for some verticals (e.g. paediatric healthcare) and for customers who want no automatic deletion. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |

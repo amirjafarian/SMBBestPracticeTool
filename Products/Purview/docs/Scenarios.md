@@ -33,7 +33,7 @@ expanding when **E5 / Purview Suite** licensing is present. It covers
 
 | # | Scenario | Default behaviour | Customer impact |
 |---|----------|-------------------|-----------------|
-| 1 | **Foundational tenant settings** | Enables audit log, label co-authoring, SharePoint label integration, PDF labels | Invisible to end users |
+| 1 | **Foundational tenant settings** | Enables audit log, SharePoint label integration, PDF labels | Invisible to end users |
 | 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults; publishes 4; sets `General` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
 | 3 | **Data Loss Prevention (DLP)** | Blocks external sharing of Confidential and Highly Confidential content from Exchange and SharePoint/OneDrive (in **simulation** mode by default) | Telemetry only until the policy is promoted out of simulation |
 | 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 7 years, then deletes | Long-tail effect — mail older than 7 years starts to be removed |
@@ -54,14 +54,14 @@ labels can be applied but won't be enforced or visible everywhere.
 | **Unified Audit Log** | Every Purview / DLP / label action shows up in audit search and SIEM exports | ✅ on |
 | **SharePoint AIP integration** | Sensitivity labels apply at the file level inside SharePoint and OneDrive (search, eDiscovery, DLP all see the label) | ✅ on |
 | **Sensitivity labels for PDF** | New PDFs created or saved in SharePoint / OneDrive carry the parent doc's label | ✅ on |
-| **Label co-authoring** | Multiple users can edit a labelled document at the same time in Office / Office Web | ✅ on |
-| **Container labels** *(opt-in)* | Lets labels apply to Microsoft 365 Groups, Teams, and SharePoint sites (`Group.Unified` `EnableMIPLabels=True`) | Auto-on with E5 / Purview Suite. Off otherwise. |
+| **Label co-authoring** | Tenant-wide switch that moves label metadata to the new embedded location so multiple users can edit a labelled / encrypted document at the same time in Office / Office Web. **One-way change** — disabling it later loses labels on unencrypted Office files; breaks third-party apps that read the old metadata location | Opt-in via `-EnableLabelCoAuthoring` |
+| **Container labels** | Lets labels apply to Microsoft 365 Groups, Teams, and SharePoint sites (`Group.Unified` `EnableMIPLabels=True`) | Auto-on with Business Premium / E5 / Purview Suite (BP includes Entra ID P1+, which is the AAD-side requirement). Opt out with `-NoLicenseAutoDetect`. |
 | **Premium audit** *(opt-in)* | Adds the rich `SearchQueryInitiated` event for the named mailbox(es); enables 1-year audit retention | Off — pass `-EnablePremiumAudit -PremiumAuditMailbox` |
 
-> **Licensing note.** The first four are **Business Premium**. Container
-> labels and premium audit require **E5 / Purview Suite**. If the script
-> detects E5 SKUs on the tenant it auto-enables container labels (skip
-> with `-NoLicenseAutoDetect` or `-BPOnly`).
+> **Licensing note.** All four are **Business Premium**. Container labels
+> are also auto-enabled on Business Premium (BP includes Entra ID P1+,
+> the AAD-side requirement) — premium audit still requires **E5 / Purview
+> Suite**. Skip auto-enable with `-NoLicenseAutoDetect`.
 
 ---
 
@@ -78,12 +78,12 @@ Public
 General                           ← default for EMAIL
 Confidential
 ├─ All Employees                  ← default for DOCUMENTS (footer only)
-├─ Specific People                (footer only)
+├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
 └─ Internal Exception             (footer only)
 Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
-├─ All Employees                  (footer + ENCRYPTED, all employees)
-├─ Specific People                (footer + ENCRYPTED, user picks who)
-└─ Internal Exception             (footer + ENCRYPTED, internal-only)
+├─ All Employees                  (footer + ENCRYPTED, Co-Author rights, all users in your tenant only)
+├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
+└─ Internal Exception             (footer + ENCRYPTED, Reviewer rights, all users in your tenant only)
 ```
 
 ### What gets published vs created
@@ -95,23 +95,62 @@ Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
 The other sub-labels are created so DLP can match on them, but kept off the
 client UI to reduce decision fatigue. Edit `LabelPolicy.PublishedLabels`
 in [`PurviewConfig.psd1`](../Config/PurviewConfig.psd1) to surface more.
+**Note:** the two "Specific People" sub-labels apply UserDefined
+encryption — Outlook auto-applies Do Not Forward; Word / Excel /
+PowerPoint prompt the recipient list at apply time. Most end users do
+not know how to respond to that dialog, so the default ships them
+unpublished. Promote them only after user training.
 
 ### Encryption — who can open the file?
 
-Only the **3 Highly Confidential sub-labels** apply encryption. The rights
-are granted to `AuthenticatedUsers`, which includes employees, B2B guests,
-social/MSA accounts, and OTP users authenticated through Entra B2B. These
-labels are therefore **not internal-only by default**.
+The **two Template-encrypted Highly Confidential sub-labels** (`All
+Employees`, `Internal Exception`) grant rights to **all users in your
+tenant only**. The rights bundle uses the `{TenantDomain}` token, which
+the toolkit resolves at run time against your auto-discovered tenant
+identity. Per Entra rights-management semantics, ANY verified domain in
+your tenant expands to ALL verified domains in your tenant, so this
+explicitly EXCLUDES external `AuthenticatedUsers` (B2B guests attached
+to OTHER tenants, social/MSA accounts, OTP users from other M365
+tenants).
 
-| Switch | Rights bundle | Office co-authoring | Programmatic access |
+The **two UserDefined Specific People sub-labels** (`Confidential\Specific
+People`, `Highly Confidential\Specific People`) let the message / file
+author pick the exact recipients at apply time. Outlook auto-applies Do
+Not Forward; Word / Excel / PowerPoint show a recipient-picker dialog.
+
+| Label | Rights bundle | Office co-authoring (rights side) | Programmatic access |
 |---|---|---|---|
-| *(default)* | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
-| `-EnableCoAuth` | Microsoft "Co-Author" — adds Copy, Print, Allow Macros | ✅ | ✅ |
+| `Highly Confidential \ All Employees` (default) | Microsoft "Co-Author" — View, Edit, Save, Copy, Print, Allow Macros, Reply, Reply All, Forward | ✅ | ✅ |
+| `Highly Confidential \ Internal Exception` (default) | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
+| Any other Template-encrypted label (no per-label override) | Inherits global default (Reviewer) | ❌ | ❌ |
 
-Co-Author is required for Office auto-save + simultaneous editing on
-encrypted documents and for any third-party tool that reads doc metadata
-through the Office object model. It is **off by default** because partners
-don't know up-front which third-party integrations a customer relies on.
+The toolkit's global default is the conservative "Reviewer" bundle
+because OBJMODEL access (granted by "Co-Author") is the right that most
+often breaks third-party apps reading Office doc metadata. To override
+the default for a specific label, add an
+`EncryptionRightsDefinitions = '...'` field on that label's hashtable in
+`PurviewConfig.psd1`. To change the global default for all
+Template-encrypted labels at once, edit the top-level
+`EncryptionRightsDefinitions` value.
+
+To intentionally OPT IN to broader cross-tenant scope (e.g. you
+collaborate with partner organizations that don't have a B2B trust into
+your tenant), replace the `{TenantDomain}` token in
+`EncryptionRightsDefinitions` with `{AuthenticatedUsers}` (or the
+literal `AuthenticatedUsers`). The toolkit refuses to silently fall
+back to this scope — if `{TenantDomain}` cannot be resolved, the
+labels module aborts with an actionable error rather than re-introduce
+the broad scope.
+
+> **Retroactive scope changes only apply to NEW labelling.** Files
+> already protected carry the use-license they had at the moment of
+> labelling. To tighten retroactively, re-label / re-protect them.
+
+Note: granting the "Co-Author" *rights bundle* on a label is independent
+of the tenant-wide *label co-authoring switch* (`-EnableLabelCoAuthoring`)
+which controls where Office stores label metadata. Office auto-save +
+simultaneous editing on encrypted documents requires both: the per-label
+rights bundle AND the tenant-wide switch.
 
 ### Visual marking (footers / watermarks)
 
@@ -252,7 +291,7 @@ automatically. Use `-BPOnly` to hard-block any E5-only feature, or
 | DLP — SharePoint + OneDrive | ✅ | ✅ | ✅ |
 | Retention (Exchange) | ✅ | ✅ | ✅ |
 | Standard audit log (90-day) | ✅ | ✅ | ✅ |
-| **Container labels** (Teams / M365 Groups / SPO sites) | ❌ blocked by `-BPOnly` | ✅ auto-on | ✅ |
+| **Container labels** (Teams / M365 Groups / SPO sites) | ✅ auto-on (BP has AAD P1+); opt out via `-NoLicenseAutoDetect` | ✅ auto-on | ✅ |
 | **Premium audit** (1-yr retention, `SearchQueryInitiated`) | ❌ | ✅ via `-EnablePremiumAudit` | ✅ |
 | **Endpoint DLP** (devices) | ❌ blocked by `-BPOnly` | ✅ created in simulation | ✅ |
 | **Copilot DLP** (block Copilot for HC) | ❌ blocked by `-BPOnly` | ✅ default ON (opt-out via `-SkipAIControls`) | ✅ |
@@ -335,7 +374,7 @@ For the long-form Microsoft Purview guide, see
 | Customer has E5 + wants container labels | *(auto-enabled — no flag needed)* |
 | Update labels / DLP that already exist (not toolkit-created) | `-AdoptExisting` |
 | Re-deploy only DLP after fixing config | `-SkipTenantSettings -SkipLabels` (retention is opt-in already) |
-| Office co-authoring on encrypted labels | `-EnableCoAuth` |
+| Office co-authoring on encrypted labels (tenant-wide, one-way) | `-EnableLabelCoAuthoring` |
 | Roll back everything | Run [`Tests/Invoke-PurviewCleanup.ps1`](../../../Tests/Invoke-PurviewCleanup.ps1) |
 
 ---

@@ -12,25 +12,40 @@
       * Public                                        — no protection
       * General                                       — no protection (DEFAULT for email)
       * Confidential                                  — no protection (parent)
-        * Confidential \ All Employees                — Footer "Classified as Confidential" (DEFAULT for documents)
-        * Confidential \ Specific People              — Footer "Classified as Confidential"
+        * Confidential \ All Employees                — Footer "Classified as Confidential"  (DEFAULT for documents)
+        * Confidential \ Specific People              — Footer + UserDefined encryption (Outlook: Do Not Forward; prompt in Word/PPT/Excel)
         * Confidential \ Internal Exception           — Footer "Classified as Confidential"
       * Highly Confidential                           — Watermark "HIGHLY CONFIDENTIAL"
-        * Highly Confidential \ All Employees         — Footer + Reviewer/Co-Author encryption
-        * Highly Confidential \ Specific People       — Footer + user-defined encryption (Outlook: Do Not Forward)
-        * Highly Confidential \ Internal Exception    — Footer + Reviewer/Co-Author encryption
+        * Highly Confidential \ All Employees         — Footer + Template encryption (all users in your tenant only)
+        * Highly Confidential \ Specific People       — Footer + UserDefined encryption (Outlook: Do Not Forward; prompt in Word/PPT/Excel)
+        * Highly Confidential \ Internal Exception    — Footer + Template encryption (all users in your tenant only)
 
-    Encryption is applied only to the three Highly Confidential sub-labels.
-    Confidential sub-labels carry visual markings (footer) but no
-    encryption, which is the SMB-friendly profile (encryption on
-    Confidential breaks too many third-party integrations and external
+    Encryption is applied to the two Highly Confidential Template-protected
+    sub-labels and to both "Specific People" sub-labels (UserDefined).
+    Confidential \ All Employees / Internal Exception carry visual markings
+    (footer) but no encryption — the SMB-friendly profile (encryption on
+    these breaks too many third-party integrations and external
     collaboration scenarios for typical SMB customers).
 
-    The default rights bundle is "Reviewer" (View, Edit Content, Save,
-    Reply/Reply-All/Forward). Pass -EnableCoAuth to use the full
-    "Co-Author" bundle (adds Copy, Print, Allow Macros) — required if you
-    want Office co-authoring (auto-save + simultaneous editing) or if
-    third-party tooling reads doc metadata via the Office object model.
+    Template encryption is scoped to the tenant via the `{TenantDomain}`
+    token in `EncryptionRightsDefinitions`. The token resolves at runtime
+    against the auto-discovered tenant identity (default verified domain,
+    or initial `*.onmicrosoft.com` domain as fallback). Per Entra
+    rights-management semantics, ANY verified domain expands to ALL
+    verified domains in the tenant, so this grants encrypted-label rights
+    to "all users in this tenant only" — NOT external `AuthenticatedUsers`
+    from other M365 tenants. To opt in to the broad scope (e.g. you
+    intentionally collaborate cross-tenant via the label), edit the config
+    to use `{AuthenticatedUsers}` or the literal `AuthenticatedUsers`.
+
+    The default rights bundle is Microsoft's "Reviewer" set (View, Edit
+    Content, Save, Reply/Reply-All/Forward). If you need a wider bundle
+    (e.g. the "Co-Author" set adding Copy, Print, Allow Macros for Office
+    co-authoring or third-party tools that read doc metadata via the
+    Office object model), edit `EncryptionRightsDefinitions` in
+    PurviewConfig.psd1 directly. Validate in a pilot tenant before
+    promoting — OBJMODEL access is the right that most often breaks
+    third-party integrations.
 
     The label policy publishes all 8 labels with separate defaults for
     documents and email:
@@ -57,13 +72,16 @@
     Update labels and policies that already exist but were not created by this
     toolkit. Use only after auditing the existing configuration.
 
-.PARAMETER EnableCoAuth
-    Use Microsoft's full "Co-Author" rights bundle (View, View Rights, Edit
-    Content, Save, Copy, Print, Reply, Reply All, Forward, Allow Macros)
-    instead of the default "Reviewer" bundle. Required for Office
-    co-authoring (auto-save + simultaneous editing) and for third-party
-    tooling that uses the Office object model. Off by default to avoid
-    breaking integrations that read doc metadata.
+.PARAMETER TenantIdentity
+    Tenant-identity object from `Get-ActualTenantIdentity` in the driver
+    script (pscustomobject with `DisplayName`, `DefaultDomain`,
+    `InitialDomain`, `TenantId`). Used to resolve the `{TenantDomain}`
+    token in `EncryptionRightsDefinitions` so encrypted labels grant
+    rights to all users in the tenant only (not external
+    `AuthenticatedUsers`). If the token is present and cannot be
+    resolved, the script aborts the labels module with an actionable
+    error — fall-back to broad `AuthenticatedUsers` would silently
+    reintroduce the exact scope this token was added to remove.
 
 .NOTES
     Label and policy changes can take up to 24 hours to fully propagate to
@@ -77,8 +95,11 @@ param(
     [Parameter()]
     [switch] $AdoptExisting,
 
+    # [object] (not [hashtable]) so we accept both the pscustomobject from
+    # Get-ActualTenantIdentity AND a plain hashtable from a partner-driver
+    # wrapper. Property access via `.DefaultDomain` etc. works for both.
     [Parameter()]
-    [switch] $EnableCoAuth
+    [object] $TenantIdentity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,17 +129,88 @@ function Format-IPPSError {
 }
 
 $tag = $Config.ManagedByTag
-# Pick the rights bundle once, up-front. The "Co-Author" bundle adds Copy
-# (EXTRACT), Print (PRINT), and Allow Macros (OBJMODEL) to the default
-# "Reviewer" set; OBJMODEL is the right that breaks third-party apps which
-# read doc metadata via the Office object model, so we keep it off unless
-# the operator explicitly opts in via -EnableCoAuth.
-$rights = if ($EnableCoAuth -and $Config.EncryptionRightsDefinitionsCoAuth) {
-    $Config.EncryptionRightsDefinitionsCoAuth
-} else {
-    $Config.EncryptionRightsDefinitions
+# Encryption rights bundle. Defined once in PurviewConfig.psd1 as
+# `EncryptionRightsDefinitions`. Default is Microsoft's "Reviewer" set
+# (View/Edit/Save/Reply/ReplyAll/Forward). Partners who need a wider
+# bundle (e.g. Copy, Print, OBJMODEL for third-party integrations) edit
+# the config string directly. OBJMODEL is the right that most often
+# breaks third-party apps reading Office doc metadata, so the default
+# is conservative.
+#
+# Token resolution (case-insensitive):
+#   * `{TenantDomain}`       -> $TenantIdentity.DefaultDomain (preferred)
+#                                or .InitialDomain (fallback). Per Entra
+#                                rights-management semantics, ANY verified
+#                                domain in the tenant expands to ALL
+#                                verified domains in that tenant, so this
+#                                scopes the rights bundle to "all users in
+#                                this tenant only" (not external
+#                                authenticated users from other M365
+#                                tenants).
+#                                If neither domain is available, the
+#                                module ABORTS with an actionable error.
+#                                Silent fall-back to `AuthenticatedUsers`
+#                                would reintroduce the exact broad scope
+#                                this token was added to remove — partners
+#                                who want broad scope must opt-in via
+#                                `{AuthenticatedUsers}` (or the literal
+#                                `AuthenticatedUsers`) in config.
+#   * `{AuthenticatedUsers}` -> the literal `AuthenticatedUsers` keyword,
+#                                for explicit broad scope.
+#   * Any other identity (email / `AuthenticatedUsers` already in the
+#     string) passes through unchanged.
+#
+# A label may also override the global default by setting its own
+# `EncryptionRightsDefinitions` field — same token semantics apply.
+# Used to grant the wider Microsoft "Co-Author" rights bundle
+# (adds EXTRACT, PRINT, OBJMODEL) to specific labels like
+# `Highly Confidential\All Employees` without affecting siblings.
+function Resolve-EncryptionRightsTokens {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $RightsDefinitions,
+        [object] $TenantIdentity,
+        [string] $Source = 'EncryptionRightsDefinitions'
+    )
+    $resolved = [string] $RightsDefinitions
+    if ($resolved -match '\{TenantDomain\}') {
+        $tenantDom = $null
+        if ($TenantIdentity) {
+            # Works for both pscustomobject and hashtable shapes.
+            if ($TenantIdentity.DefaultDomain) { $tenantDom = [string] $TenantIdentity.DefaultDomain }
+            elseif ($TenantIdentity.InitialDomain) { $tenantDom = [string] $TenantIdentity.InitialDomain }
+        }
+        if ($tenantDom) {
+            $resolved = $resolved -replace '\{TenantDomain\}', $tenantDom
+        } else {
+            $msg = "Cannot resolve '{TenantDomain}' token in $Source : TenantIdentity was not supplied or has no DefaultDomain/InitialDomain. " +
+                   "Refusing to fall back to 'AuthenticatedUsers' because that would silently grant encrypted-label access to ALL Microsoft 365 tenants (the exact scope this token was added to remove). " +
+                   "Remediation: re-run via Deploy-PurviewBestPractice.ps1 so tenant identity is auto-discovered, OR (if you intentionally want broad scope) replace '{TenantDomain}' with '{AuthenticatedUsers}' in the affected config field."
+            if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Resolve {TenantDomain} ($Source)" `
+                    -Target '(unresolved)' -Status 'Failed' -Detail $msg
+            }
+            throw $msg
+        }
+    }
+    if ($resolved -match '\{AuthenticatedUsers\}') {
+        $resolved = $resolved -replace '\{AuthenticatedUsers\}', 'AuthenticatedUsers'
+    }
+    return $resolved
 }
-$rightsBundleName = if ($EnableCoAuth) { 'Co-Author' } else { 'Reviewer' }
+
+$rights = Resolve-EncryptionRightsTokens -RightsDefinitions $Config.EncryptionRightsDefinitions `
+                                          -TenantIdentity $TenantIdentity `
+                                          -Source 'Config.EncryptionRightsDefinitions (global default)'
+if ($Config.EncryptionRightsDefinitions -match '\{TenantDomain\}') {
+    $tenantDom = if ($TenantIdentity.DefaultDomain) { $TenantIdentity.DefaultDomain } else { $TenantIdentity.InitialDomain }
+    Write-Host "Encryption rights bundle scoped to tenant domain '$tenantDom' (all users in this tenant only)." -ForegroundColor DarkGray
+    if (Get-Command Add-RunLogEntry -ErrorAction SilentlyContinue) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Resolve {TenantDomain}' `
+            -Target $tenantDom -Status 'Info' `
+            -Detail "Resolved {TenantDomain} token in EncryptionRightsDefinitions (global default) to '$tenantDom' (all users in this tenant only; excludes external AuthenticatedUsers)."
+    }
+}
 $offlineDays = $Config.EncryptionOfflineAccessDays
 
 # Cache the full label set once so we can match by DisplayName too. The IPPS
@@ -412,19 +504,105 @@ function Get-LabelByName {
     param(
         [string] $Name,
         [string] $DisplayName,
-        [string] $ParentId
+        [string] $ParentId,
+        # Scope filter for which labels to consider:
+        #   'Any'      - legacy permissive match (default for back-compat). Name
+        #                match is hierarchy-agnostic; DisplayName fallback honours
+        #                the supplied $ParentId (null = top-level).
+        #   'TopLevel' - match only labels with no ParentId.
+        #   'Parent'   - match only labels whose ParentId equals $ParentId. Requires $ParentId.
+        # Use 'TopLevel' for configured-parent lookups and 'Parent' for sub-label
+        # lookups under a known parent. Without an explicit scope a tenant that
+        # has a sub-label with the same internal Name as a configured parent
+        # (common on tenants migrated to the modern label scheme or with the
+        # Microsoft-default labels enabled) will return the sub-label and the
+        # caller will cache it as a "parent", which then breaks Pass 3 Phase A
+        # with InvalidSubLabelPriorityException.
+        [ValidateSet('Any','TopLevel','Parent')]
+        [string] $Scope = 'Any'
     )
-    $byName = $allLabels | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    if ($Scope -eq 'Parent' -and [string]::IsNullOrWhiteSpace($ParentId)) { return $null }
+
+    $candidates = switch ($Scope) {
+        'TopLevel' { $allLabels | Where-Object { -not $_.ParentId } }
+        'Parent'   { $allLabels | Where-Object { $_.ParentId -eq $ParentId } }
+        default    { $allLabels }
+    }
+
+    $byName = $candidates | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
     if ($byName) { return $byName }
 
     if ($DisplayName) {
-        $byDisplay = $allLabels | Where-Object {
-            $_.DisplayName -eq $DisplayName -and (
-                ($ParentId -and $_.ParentId -eq $ParentId) -or
-                (-not $ParentId -and -not $_.ParentId)
-            )
-        } | Select-Object -First 1
+        if ($Scope -eq 'Any') {
+            # Legacy 'Any' scope: DisplayName fallback uses the caller-supplied
+            # ParentId-or-null filter (DisplayName is not tenant-globally unique
+            # like Name is).
+            $byDisplay = $allLabels | Where-Object {
+                $_.DisplayName -eq $DisplayName -and (
+                    ($ParentId -and $_.ParentId -eq $ParentId) -or
+                    (-not $ParentId -and -not $_.ParentId)
+                )
+            } | Select-Object -First 1
+        } else {
+            $byDisplay = $candidates | Where-Object { $_.DisplayName -eq $DisplayName } | Select-Object -First 1
+        }
         if ($byDisplay) { return $byDisplay }
+    }
+    return $null
+}
+
+# Read a single advanced-setting key (e.g. 'color') off a live Get-Label
+# object. IPPS surfaces these as a `Settings` collection whose ToString()
+# renders each entry as `[key, value]` (e.g. `[color, #13A10E]`). Parsing
+# the rendered form is the most reliable approach because the underlying
+# CLR type is not stable across cmdlet versions. Returns $null when the
+# label, the collection, or the key is missing.
+function Get-LabelAdvancedSetting {
+    param(
+        $Label,
+        [Parameter(Mandatory)] [string] $Key
+    )
+    if (-not $Label) { return $null }
+    $needle = $Key.Trim().ToLowerInvariant()
+    foreach ($propName in @('Settings','AdvancedSettings','LocaleSettings')) {
+        $prop = $Label.PSObject.Properties[$propName]
+        if (-not $prop) { continue }
+        $coll = $prop.Value
+        if (-not $coll) { continue }
+        # Try structured access first (Key/Value or Name/Value or dictionary)
+        # before falling back to regex on the rendered '[key, value]' form. The
+        # IPPS module version sometimes returns typed Setting objects, and a
+        # mismatch in ToString() rendering would otherwise cause repeat false
+        # drift detections on every run.
+        if ($coll -is [System.Collections.IDictionary]) {
+            foreach ($k in $coll.Keys) {
+                if (([string]$k).Trim().ToLowerInvariant() -eq $needle) {
+                    return [string]$coll[$k]
+                }
+            }
+            continue
+        }
+        foreach ($item in @($coll)) {
+            if ($null -eq $item) { continue }
+            $keyProp = $null
+            foreach ($kp in 'Key','Name') {
+                $p = $item.PSObject.Properties[$kp]
+                if ($p) { $keyProp = $p; break }
+            }
+            $valProp = $item.PSObject.Properties['Value']
+            if ($keyProp -and $valProp) {
+                if (([string]$keyProp.Value).Trim().ToLowerInvariant() -eq $needle) {
+                    return [string]$valProp.Value
+                }
+                continue
+            }
+            $s = [string]$item
+            if ($s -match '^\s*\[\s*([^,\]]+?)\s*,\s*(.*?)\s*\]\s*$') {
+                if ($matches[1].Trim().ToLowerInvariant() -eq $needle) {
+                    return $matches[2].Trim()
+                }
+            }
+        }
     }
     return $null
 }
@@ -434,13 +612,22 @@ function Get-LabelByName {
 # Get-Label -Identity in New-OrUpdate-Label and is authoritative even for
 # Microsoft-default labels (e.g. 'Public', 'Personal') that bulk Get-Label
 # does not always surface reliably. Falls back to the bulk-cache lookup.
+#
+# The cached object MUST be top-level. If Pass 1 cached a sub-label (which can
+# happen on tenants with name collisions between configured parents and live
+# sub-labels), we return $null and let the caller surface the remediation.
+# Without this guard, Phase A would push the sub-label to priority 0 and hit
+# InvalidSubLabelPriorityException ("priority 0 is invalid for sub-label").
 function Resolve-ConfigParentLabel {
     param([Parameter(Mandatory)] [hashtable] $LabelDef)
     if ($script:createdParents -and $script:createdParents.ContainsKey($LabelDef.Name)) {
         $cached = $script:createdParents[$LabelDef.Name]
-        if ($cached) { return $cached }
+        if ($cached -and -not $cached.ParentId) { return $cached }
+        # Cached object is a sub-label - reject and fall through to bulk lookup
+        # (which is also scope-restricted) so the caller never blindly trusts a
+        # collision-tainted cache entry.
     }
-    return Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName
+    return Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -Scope 'TopLevel'
 }
 
 # Return the most stable identity to pass to IPPS cmdlets. The label Guid is
@@ -645,14 +832,24 @@ function Set-LabelEncryption {
         [ValidateSet('Template','UserDefined')]
         [string] $ProtectionType = 'Template',
         [ValidateSet('EncryptOnly','DoNotForward','None')]
-        [string] $UserDefinedOutlookBehavior = 'None'
+        [string] $UserDefinedOutlookBehavior = 'None',
+        # Optional per-label override. When supplied, this rights string is
+        # passed to Set-Label instead of the module-level `$rights` default.
+        # Caller is responsible for resolving any `{TenantDomain}` token
+        # via Resolve-EncryptionRightsTokens before passing it in.
+        [string] $RightsDefinitions
     )
+    $effectiveRights = if ($PSBoundParameters.ContainsKey('RightsDefinitions') -and $RightsDefinitions) {
+        $RightsDefinitions
+    } else {
+        $rights
+    }
     if ($ProtectionType -eq 'Template') {
         Invoke-WithTransientRetry -Description ("Set-Label encryption (Template) '$Identity'") -Action {
             Set-Label -Identity $Identity `
                 -EncryptionEnabled $true `
                 -EncryptionProtectionType 'Template' `
-                -EncryptionRightsDefinitions $rights `
+                -EncryptionRightsDefinitions $effectiveRights `
                 -EncryptionContentExpiredOnDateInDaysOrNever 'Never' `
                 -EncryptionOfflineAccessDays $offlineDays `
                 -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
@@ -716,7 +913,8 @@ function New-OrUpdate-Label {
         [string] $ParentId
     )
 
-    $existing = Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -ParentId $ParentId
+    $existing = Get-LabelByName -Name $LabelDef.Name -DisplayName $LabelDef.DisplayName -ParentId $ParentId `
+        -Scope $(if ($ParentId) { 'Parent' } else { 'TopLevel' })
     $owned     = Test-Owned -Object $existing -Tag $tag
     $matchedBy = $null
     $justCreated = $false   # New-Label succeeded inside this call
@@ -738,6 +936,37 @@ function New-OrUpdate-Label {
     $comment = "$tag $tooltip"
 
     if (-not $existing) {
+        # Cross-scope Name-collision pre-check. IPPS enforces tenant-globally
+        # unique label Names, so if the configured Name collides with a live
+        # label in a DIFFERENT hierarchy scope (typically: configured top-level
+        # vs an existing sub-label of the same Name, common on tenants migrated
+        # to the modern label scheme or with Microsoft-default labels enabled),
+        # New-Label will fail with a cryptic message. Detect upfront and surface
+        # an actionable remediation, otherwise Pass 3 fails later with
+        # InvalidSubLabelPriorityException when the wrong object is reordered.
+        $callerWantsTopLevel = -not $ParentId
+        $nameCollision = $allLabels | Where-Object { $_.Name -eq $LabelDef.Name } | Select-Object -First 1
+        if ($nameCollision) {
+            $collisionIsSubLabel = [bool] $nameCollision.ParentId
+            if ($callerWantsTopLevel -eq $collisionIsSubLabel) {
+                $callerScope = if ($callerWantsTopLevel) { 'top-level' } else { "child of parent Id $ParentId" }
+                $liveScope   = if ($collisionIsSubLabel) { "sub-label of parent Id $($nameCollision.ParentId)" } else { 'top-level' }
+                $collisionGuid = if ($nameCollision.Guid) { [string]$nameCollision.Guid } else { 'unknown' }
+                $detail = @(
+                    "Cannot create configured label '$($LabelDef.Name)' as ${callerScope}: a live label with the same Name already exists in this tenant as a $liveScope (Id: $collisionGuid)."
+                    "Microsoft Purview enforces tenant-globally unique label Names, and the modern label scheme strictly enforces sub-label priority ranges, so this collision must be resolved."
+                    "Remediation options:"
+                    "  1. Rename the configured label in Products/Purview/Config/PurviewConfig.psd1 (change Labels.Name) so it no longer collides."
+                    "  2. In Purview Admin Center (https://purview.microsoft.com), delete or un-nest the colliding live label (Id: $collisionGuid), then re-run."
+                    "  3. If the collision is with a Microsoft-default sensitivity label, keep the default and update the configured Name to a tenant-unique value."
+                ) -join "`n    "
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' `
+                    -Target $LabelDef.DisplayName -Status 'Failed' -Detail $detail
+                Write-Warning "    $detail"
+                return $null
+            }
+        }
+
         if (-not $PSCmdlet.ShouldProcess($LabelDef.Name, 'New-Label')) { return $null }
 
         $newArgs = @{
@@ -747,6 +976,9 @@ function New-OrUpdate-Label {
             Comment     = $comment
         }
         if ($ParentId) { $newArgs['ParentId'] = $ParentId }
+        if (-not [string]::IsNullOrWhiteSpace([string]$LabelDef.Color)) {
+            $newArgs['AdvancedSettings'] = @{ color = [string]$LabelDef.Color }
+        }
 
         # IPPS cmdlets bypass -ErrorAction Stop. Capture errors via -ErrorVariable.
         # PR4: wrap with Invoke-WithTransientRetry so 502/503/504/429 auto-retry.
@@ -777,6 +1009,23 @@ function New-OrUpdate-Label {
             if ($msg -match "Duplicate display name '[^']+' is already used by label '([0-9a-f-]{36}[^']*)'") {
                 $existingGuid = $Matches[1]
                 $found = Get-Label -Identity $existingGuid -ErrorAction SilentlyContinue
+                # Validate hierarchy before adopting. Without this check, adopting
+                # a sub-label as a configured top-level parent (or vice versa)
+                # would cache the wrong object in $createdParents and trigger
+                # InvalidSubLabelPriorityException in Phase A.
+                if ($found) {
+                    $callerWantsTopLevel = -not $ParentId
+                    $foundIsSubLabel     = [bool] $found.ParentId
+                    if ($callerWantsTopLevel -eq $foundIsSubLabel) {
+                        $callerScope = if ($callerWantsTopLevel) { 'top-level' } else { "child of parent Id $ParentId" }
+                        $liveScope   = if ($foundIsSubLabel) { "sub-label of parent Id $($found.ParentId)" } else { 'top-level' }
+                        $detail = "Duplicate-display-name adoption for '$($LabelDef.DisplayName)' resolved to live label (Id: $existingGuid) in a DIFFERENT hierarchy scope than configured. Configured scope: $callerScope. Live scope: $liveScope. Refusing to adopt to avoid mis-pinning priority (Phase A would then fail with InvalidSubLabelPriorityException). Rename the configured label or un-nest the live label, then re-run."
+                        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' `
+                            -Target $LabelDef.DisplayName -Status 'Failed' -Detail $detail
+                        Write-Warning "    $detail"
+                        return $null
+                    }
+                }
                 if (-not $found) {
                     $found = [pscustomobject]@{
                         Name        = $existingGuid
@@ -841,22 +1090,101 @@ function New-OrUpdate-Label {
         }
     }
 
+    # Color drift correction for pre-existing labels we just adopted or
+    # already manage. New labels (-justCreated) already had the colour
+    # applied via New-Label -AdvancedSettings so we skip the round-trip.
+    # AdvancedSettings is merge-not-replace on the IPPS side, so this only
+    # touches the `color` key and leaves any other advanced settings alone.
+    if (-not $justCreated -and $existing -and ($owned -or $AdoptExisting) `
+        -and -not [string]::IsNullOrWhiteSpace([string]$LabelDef.Color)) {
+        $configColor = ([string]$LabelDef.Color).Trim()
+        # Wrap the drift-read in transient retry so a 502/503/504/429 hiccup
+        # cannot masquerade as 'missing colour' and trigger an unnecessary
+        # Set-Label round-trip on the next pass. On hard failure, fall back
+        # to the already-cached $existing object before assuming drift.
+        $live = $null
+        try {
+            Invoke-WithTransientRetry -Description ("Get-Label colour read '$idForOps'") -Action {
+                $script:__colorReadResult = Get-Label -Identity $idForOps -ErrorAction Stop
+            }
+            $live = $script:__colorReadResult
+        } catch {
+            $live = $existing
+        } finally {
+            Remove-Variable -Scope script -Name '__colorReadResult' -ErrorAction SilentlyContinue
+        }
+        $currentColor = Get-LabelAdvancedSetting -Label $live -Key 'color'
+        $needsUpdate = (-not $currentColor) -or
+            ($currentColor.ToLowerInvariant() -ne $configColor.ToLowerInvariant())
+        if ($needsUpdate) {
+            if ($PSCmdlet.ShouldProcess($idForOps, "Set-Label color $configColor")) {
+                try {
+                    Invoke-WithTransientRetry -Description ("Set-Label color '$idForOps'") -Action {
+                        Set-Label -Identity $idForOps `
+                            -AdvancedSettings @{ color = $configColor } `
+                            -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                    }
+                    $detail = if ($currentColor) {
+                        "Updated label '$($LabelDef.DisplayName)' colour from $currentColor to $configColor."
+                    } else {
+                        "Set label '$($LabelDef.DisplayName)' colour to $configColor."
+                    }
+                    Write-Host "    ~ $detail" -ForegroundColor Yellow
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $detail
+                } catch {
+                    $msg = Format-IPPSError $_
+                    Write-Warning "    Failed to update colour for label '$($LabelDef.DisplayName)': $msg"
+                    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label color' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $msg
+                }
+            }
+        }
+    }
+
     # Encryption (newly created OR managed OR -AdoptExisting)
     if ($LabelDef.Encrypt -and $existing -and ($justCreated -or $owned -or $AdoptExisting)) {
         $protType = if ($LabelDef.ProtectionType) { $LabelDef.ProtectionType } else { 'Template' }
         $outlookBehavior = if ($LabelDef.UserDefinedOutlookBehavior) { $LabelDef.UserDefinedOutlookBehavior } else { 'None' }
+        # Per-label rights bundle override. When the label config carries its own
+        # `EncryptionRightsDefinitions`, resolve {TenantDomain} against the same
+        # TenantIdentity and pass to Set-LabelEncryption. Otherwise the function
+        # falls back to the module-level `$rights` default. Used by HCAllEmps
+        # (Co-Author bundle: View/Edit/Save/Copy/Print/Allow-Macros/Reply...)
+        # without affecting siblings that should stay on the Reviewer default.
+        $labelRights = $null
+        if ($LabelDef.EncryptionRightsDefinitions) {
+            $labelRights = Resolve-EncryptionRightsTokens `
+                -RightsDefinitions $LabelDef.EncryptionRightsDefinitions `
+                -TenantIdentity $TenantIdentity `
+                -Source "Labels.$($LabelDef.Name).EncryptionRightsDefinitions"
+        }
         $shouldProcessTarget = if ($protType -eq 'Template') {
-            "Apply encryption (Template / $rightsBundleName rights)"
+            $bundleNote = if ($labelRights) { 'custom rights' } else { "$rightsBundleName rights" }
+            "Apply encryption (Template / $bundleNote)"
         } else {
             "Apply encryption (UserDefined / Outlook=$outlookBehavior)"
         }
         if ($PSCmdlet.ShouldProcess($idForOps, $shouldProcessTarget)) {
             try {
-                Set-LabelEncryption -Identity $idForOps `
-                    -ProtectionType $protType `
-                    -UserDefinedOutlookBehavior $outlookBehavior
+                $encParams = @{
+                    Identity                   = $idForOps
+                    ProtectionType             = $protType
+                    UserDefinedOutlookBehavior = $outlookBehavior
+                }
+                if ($labelRights) { $encParams['RightsDefinitions'] = $labelRights }
+                Set-LabelEncryption @encParams
+                $effectiveRights = if ($labelRights) { $labelRights } else { $rights }
+                $encDetail = if ($protType -eq 'Template') {
+                    "Applied Template encryption to label '$($LabelDef.DisplayName)' with rights: $effectiveRights."
+                } else {
+                    "Applied UserDefined encryption to label '$($LabelDef.DisplayName)' (Outlook=$outlookBehavior)."
+                }
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Updated' -Detail $encDetail
             }
-            catch { Write-Warning "    Encryption update failed for '$($LabelDef.DisplayName)': $($_.Exception.Message)" }
+            catch {
+                $encMsg = Format-IPPSError $_
+                Write-Warning "    Encryption update failed for '$($LabelDef.DisplayName)': $encMsg"
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Set-Label encryption' -Target $LabelDef.DisplayName -Status 'Failed' -Detail $encMsg
+            }
         }
     }
 
@@ -885,11 +1213,17 @@ function New-OrUpdate-Label {
 }
 
 # ---------------------------------------------------------------------------
-# Pass 0 — upfront name-length validation
+# Pass 0 — upfront validation (name length + colour hex)
 #
 # Purview enforces a 64-character maximum on label, sub-label, and label-policy
 # names. The IPPS backend rejects longer names with an empty/cryptic error, so
 # we validate upfront to give partners a clear, actionable diagnostic.
+#
+# Label colours are passed through to `New-Label/Set-Label -AdvancedSettings
+# @{color=...}` and must be valid 6-digit hex triplets (`#RRGGBB`). Anything
+# else (3-digit shorthand, named colours, missing `#`) is rejected upfront
+# because the backend silently drops malformed values and the colour silently
+# fails to appear.
 # ---------------------------------------------------------------------------
 foreach ($lbl in $Config.Labels) {
     if ($lbl.Name.Length -gt 64) {
@@ -898,6 +1232,12 @@ foreach ($lbl in $Config.Labels) {
     if ($lbl.DisplayName -and $lbl.DisplayName.Length -gt 64) {
         throw "Sensitivity label DisplayName '$($lbl.DisplayName)' is $($lbl.DisplayName.Length) characters; Microsoft Purview enforces a 64-character maximum. Edit PurviewConfig.psd1 and shorten the Labels.DisplayName field."
     }
+    if ($lbl.PSObject.Properties.Match('Color').Count -gt 0 -or ($lbl -is [hashtable] -and $lbl.ContainsKey('Color'))) {
+        $c = [string]$lbl.Color
+        if (-not [string]::IsNullOrWhiteSpace($c) -and $c -notmatch '^#[0-9A-Fa-f]{6}$') {
+            throw "Sensitivity label '$($lbl.Name)' has invalid Color '$c'; must be a 6-digit hex triplet like '#13A10E'. Edit PurviewConfig.psd1."
+        }
+    }
     foreach ($sub in @($lbl.SubLabels)) {
         if (-not $sub) { continue }
         if ($sub.Name.Length -gt 64) {
@@ -905,6 +1245,12 @@ foreach ($lbl in $Config.Labels) {
         }
         if ($sub.DisplayName -and $sub.DisplayName.Length -gt 64) {
             throw "Sub-label DisplayName '$($sub.DisplayName)' is $($sub.DisplayName.Length) characters; Microsoft Purview enforces a 64-character maximum. Edit PurviewConfig.psd1."
+        }
+        if ($sub.PSObject.Properties.Match('Color').Count -gt 0 -or ($sub -is [hashtable] -and $sub.ContainsKey('Color'))) {
+            $sc = [string]$sub.Color
+            if (-not [string]::IsNullOrWhiteSpace($sc) -and $sc -notmatch '^#[0-9A-Fa-f]{6}$') {
+                throw "Sub-label '$($sub.Name)' (under parent '$($lbl.Name)') has invalid Color '$sc'; must be a 6-digit hex triplet like '#EAA300'. Edit PurviewConfig.psd1."
+            }
         }
     }
 }
@@ -921,6 +1267,45 @@ foreach ($lbl in $Config.Labels) {
     Write-Host "  Label: $($lbl.Name)" -ForegroundColor White
     $parent = New-OrUpdate-Label -LabelDef $lbl
     $script:createdParents[$lbl.Name] = $parent
+}
+
+# ---------------------------------------------------------------------------
+# Pass 1.5 - preflight: enforce that every cached parent is actually a
+# TOP-LEVEL live label. Pass 1's New-OrUpdate-Label already surfaces a Warning
+# + null cache entry when a cross-scope Name collision is detected upfront,
+# but the duplicate-display-name recovery path can also unmask a sub-label.
+# This unified throw gives the operator a single actionable error before
+# Pass 2 wires sub-labels under the wrong object and Pass 3 Phase A explodes
+# with InvalidSubLabelPriorityException on a modern-scheme tenant.
+# ---------------------------------------------------------------------------
+$parentScopeCollisions = @()
+foreach ($lbl in $Config.Labels) {
+    $cached = $script:createdParents[$lbl.Name]
+    if (-not $cached) { continue }  # Pass 1 creation failed; warning already emitted.
+    if ($cached.PSObject.Properties.Name -contains 'ParentId' -and $cached.ParentId) {
+        $parentScopeCollisions += [pscustomobject]@{
+            ConfigName   = $lbl.Name
+            DisplayName  = $lbl.DisplayName
+            LiveGuid     = if ($cached.Guid) { [string]$cached.Guid } else { 'unknown' }
+            LiveParentId = [string]$cached.ParentId
+        }
+    }
+}
+if ($parentScopeCollisions.Count -gt 0) {
+    $lines = foreach ($c in $parentScopeCollisions) {
+        "  - Configured parent label '$($c.ConfigName)' (DisplayName '$($c.DisplayName)') resolved to LIVE label (Id: $($c.LiveGuid)) that is a SUB-LABEL of parent (Id: $($c.LiveParentId))."
+    }
+    $detail = @(
+        "Parent label scope collision detected after Pass 1. The modern label scheme strictly enforces sub-label priority ranges, so a configured top-level label that resolves to an existing sub-label cannot be reordered to priority 0."
+        ($lines -join "`n")
+        "Remediation options:"
+        "  1. Rename the configured label in Products/Purview/Config/PurviewConfig.psd1 (Labels.Name and Labels.DisplayName) so it no longer collides with the existing sub-label."
+        "  2. In Purview Admin Center (https://purview.microsoft.com), edit the colliding live sub-label to move it out from under its parent (or delete it if unused), then re-run."
+        "  3. If the collision is with a Microsoft-default sensitivity label, update the configured Name to a tenant-unique value."
+    ) -join "`n"
+    Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Preflight-ParentScope' `
+        -Target 'configured parents' -Status 'Failed' -Detail $detail
+    throw $detail
 }
 
 # ---------------------------------------------------------------------------
@@ -977,9 +1362,31 @@ foreach ($lbl in $Config.Labels) {
     $configuredDisplayNamesEarly += $lbl.DisplayName
     if ($lbl.SubLabels) { $configuredDisplayNamesEarly += $lbl.SubLabels.DisplayName }
 }
-$allTopLevel = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not $_.ParentId })
+
+# Refresh the $allLabels cache with LIVE state from Purview BEFORE slot
+# accounting and Phase A. A single fresh snapshot is reused for unmanaged
+# top-level detection AND live sub-label counts so both views agree (and
+# downstream Resolve-ConfigParentLabel / Get-LabelByName see the same data).
+# The initial snapshot at the top of the script was taken before Pass 2
+# created labels (and before any prior Pass 3 run shuffled priorities);
+# reading priorities from a stale cache causes Phase A to skip labels that
+# look "already correct" but aren't, which is how 'Public' gets stranded
+# at the wrong end of the priority list on multi-run tenants.
+$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+$allTopLevel = @($script:allLabels | Where-Object { -not $_.ParentId })
 $unmanagedTopLevel = @($allTopLevel | Where-Object { $configuredDisplayNamesEarly -notcontains $_.DisplayName })
-$unmanagedCount = $unmanagedTopLevel.Count
+
+# Total slot footprint of unmanaged top-level labels = each unmanaged parent
+# PLUS its live direct children. Personal has no children in practice, but
+# counting children defensively handles arbitrary unmanaged hierarchies and
+# keeps configured-label slot accounting correct regardless.
+$unmanagedFootprint = 0
+foreach ($u in $unmanagedTopLevel) {
+    $unmanagedFootprint++
+    if ($u.Guid) {
+        $unmanagedFootprint += @($script:allLabels | Where-Object { $_.ParentId -eq $u.Guid }).Count
+    }
+}
 
 # Build pin-order: 'Personal' FIRST (so it gets pushed LAST in reverse
 # iteration and lands at slot 0), then any other unmanaged labels.
@@ -989,24 +1396,55 @@ $pinOrder        = @()
 if ($personalLbl.Count -gt 0)    { $pinOrder += $personalLbl[0] }
 if ($otherUnmanaged.Count -gt 0) { $pinOrder += $otherUnmanaged }
 
-# Compute the expected GLOBAL priority for each top-level config label.
-# Slots 0..unmanagedCount-1 are reserved for unmanaged labels (Personal
-# at 0); config labels start at $unmanagedCount.
+# Compute the expected GLOBAL priority for each configured top-level label.
+# Slots 0..unmanagedFootprint-1 are reserved for unmanaged top-level labels
+# and their children (Personal at slot 0); configured labels start at
+# $unmanagedFootprint.
+#
+# Each managed parent's slot footprint is 1 (parent) + LIVE direct sub-label
+# count. Using LIVE count (not config count) is critical when a managed
+# parent has extra "phantom" sub-labels left over from a previous failed
+# run: those extras still occupy slots in the parent's block, so a config-
+# only count under-reserves and downstream parents land at the wrong slot.
+# Use MAX(live, config) so we don't under-reserve when the live snapshot is
+# missing newly-created children due to eventual consistency.
 $expectedParentPriority = @{}
-$cursor = $unmanagedCount
+$cursor = $unmanagedFootprint
 foreach ($lbl in $Config.Labels) {
     $expectedParentPriority[$lbl.DisplayName] = $cursor
     $cursor++
-    if ($lbl.SubLabels) { $cursor += $lbl.SubLabels.Count }
-}
+    $parentObjForCount = Resolve-ConfigParentLabel -LabelDef $lbl
+    $configChildCount = if ($lbl.SubLabels) { $lbl.SubLabels.Count } else { 0 }
+    $liveChildren = @()
+    if ($parentObjForCount -and $parentObjForCount.Guid) {
+        $liveChildren = @($script:allLabels | Where-Object { $_.ParentId -eq $parentObjForCount.Guid })
+    }
+    $effectiveChildCount = if ($liveChildren.Count -gt $configChildCount) { $liveChildren.Count } else { $configChildCount }
+    $cursor += $effectiveChildCount
 
-# Refresh the $allLabels cache with LIVE state from Purview before Phase A.
-# The initial snapshot at the top of the script was taken before Pass 2
-# created labels (and before any prior Pass 3 run shuffled priorities).
-# Reading priorities from a stale cache causes Phase A to skip labels that
-# look "already correct" but aren't, which is how 'Public' gets stranded
-# at the wrong end of the priority list on multi-run tenants.
-$script:allLabels = @(Get-Label -ErrorAction SilentlyContinue | Where-Object { -not (Test-LabelSoftDeleted $_) })
+    # Identity-based phantom detection: warn about any live sub-label whose
+    # Name AND DisplayName don't match any configured sub-label under this
+    # parent. They occupy slot(s) inside the parent's block but won't be
+    # reordered by Phase B; admin should rename or remove them in Purview UI.
+    if ($parentObjForCount -and $liveChildren.Count -gt 0) {
+        $configChildNames        = @()
+        $configChildDisplayNames = @()
+        if ($lbl.SubLabels) {
+            $configChildNames        = @($lbl.SubLabels | ForEach-Object { $_.Name })
+            $configChildDisplayNames = @($lbl.SubLabels | ForEach-Object { $_.DisplayName })
+        }
+        $extras = @($liveChildren | Where-Object {
+            ($configChildNames -notcontains $_.Name) -and ($configChildDisplayNames -notcontains $_.DisplayName)
+        })
+        if ($extras.Count -gt 0) {
+            $extrasDesc = ($extras | ForEach-Object { "'$($_.DisplayName)' [Name=$($_.Name); Guid=$($_.Guid)]" }) -join ', '
+            Write-Warning ("    Managed parent '{0}' has {1} unmanaged live sub-label(s): {2}. They occupy slot(s) in the parent's block; rename or remove them in Purview Admin if not intentional." -f $lbl.DisplayName, $extras.Count, $extrasDesc)
+            Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Detect-PhantomSubLabel' `
+                -Target $lbl.DisplayName -Status 'Info' `
+                -Detail "Live sub-label count ($($liveChildren.Count)) exceeds configured ($configChildCount). Extras: $extrasDesc"
+        }
+    }
+}
 
 # Pre-check: are config parents already in the right slots AND is Personal at 0?
 # Use Get-LiveLabelByObject (bulk-fetch fallback) so the precheck succeeds even
@@ -1102,9 +1540,11 @@ if (-not $parentsAlreadyCorrect -or -not $personalAlreadyAtZero) {
 #
 # Sub-label priorities are GLOBAL (not relative to the parent), but Purview
 # enforces that a sub-label can only move within its parent's contiguous block.
-# Derive the first child slot from the script's expected parent ordering rather
-# than current live child priorities: immediately after Phase A, IPPS can still
-# surface stale child priority values and cause us to target the wrong slot.
+# Derive the first child slot from the LIVE parent priority (refreshed via
+# Get-LiveLabelByObject) and sanity-check against the expected slot so we
+# never target a slot outside the parent's actual live block — which causes
+# InvalidSubLabelPriorityException when Phase A's expected slot calculation
+# is off (e.g. tenant has phantom unmanaged sub-labels under a managed parent).
 foreach ($lbl in $Config.Labels) {
     if (-not $lbl.SubLabels -or $lbl.SubLabels.Count -eq 0) { continue }
     $parentMeta = Resolve-ConfigParentLabel -LabelDef $lbl
@@ -1123,13 +1563,32 @@ foreach ($lbl in $Config.Labels) {
         continue
     }
 
-    $firstChildSlot = [int]$expectedParentPriority[$lbl.DisplayName] + 1
+    # Phase B derives child slots from the LIVE parent priority (not from the
+    # statically computed expected) so it stays correct even if the parent
+    # ended up at a slightly different slot than expected (e.g. IPPS eventual
+    # consistency right after Phase A). Sanity-check live vs expected first;
+    # if they disagree after one refresh, defer Phase B for this parent so
+    # the verifier/recovery can fix the parent on a subsequent pass.
+    $expectedParentSlot = [int]$expectedParentPriority[$lbl.DisplayName]
+    if ($parentObj.Priority -ne $expectedParentSlot) {
+        Start-Sleep -Seconds 2
+        $refreshed = Get-LiveLabelByObject -LabelObject $parentMeta
+        if ($refreshed) { $parentObj = $refreshed }
+    }
+    if ($parentObj.Priority -ne $expectedParentSlot) {
+        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Phase B sub-label reorder' `
+            -Target $lbl.DisplayName -Status 'Skipped' `
+            -Detail "Parent priority $($parentObj.Priority) does not match expected $expectedParentSlot after refresh; deferring sub-label reorder so verifier can recover parent first."
+        Write-Warning "    Sub-label reorder deferred for '$($lbl.DisplayName)' (parent at slot $($parentObj.Priority), expected $expectedParentSlot)."
+        continue
+    }
+    $firstChildSlot = [int]$parentObj.Priority + 1
 
     # Pre-check: are the sub-labels already in config order?
     $childrenCorrect = $true
     $expectedSlot = $firstChildSlot
     foreach ($sub in $lbl.SubLabels) {
-        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid -Scope 'Parent'
         if (-not $subMeta) { $childrenCorrect = $false; break }
         $subLive = Get-LiveLabelByObject -LabelObject $subMeta
         if (-not $subLive -or $subLive.Priority -ne $expectedSlot) { $childrenCorrect = $false; break }
@@ -1139,7 +1598,7 @@ foreach ($lbl in $Config.Labels) {
 
     for ($i = $lbl.SubLabels.Count - 1; $i -ge 0; $i--) {
         $sub = $lbl.SubLabels[$i]
-        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid
+        $subMeta = Get-LabelByName -Name $sub.Name -DisplayName $sub.DisplayName -ParentId $parentObj.Guid -Scope 'Parent'
         if (-not $subMeta) {
             Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action "Set-Label priority=$firstChildSlot" `
                 -Target $sub.DisplayName -Status 'Skipped' `
@@ -1264,7 +1723,11 @@ if ($mismatches.Count -gt 0) {
 }
 if ($mismatches.Count -gt 0) {
     $lines = foreach ($m in $mismatches) {
-        "  - '$($m.Label.DisplayName)' (Id: $($m.Identity)) is at priority $($m.Actual); expected $($m.Expected) [reason: $($m.Reason)]"
+        if ($m.Reason -eq 'unresolved') {
+            "  - '$($m.Label.DisplayName)' could not be resolved as a TOP-LEVEL live label (expected priority $($m.Expected)). Likely a scope collision (a sub-label with the same Name exists in this tenant). See earlier Pass 1 warnings or the Preflight-ParentScope log entry; rename the configured label or un-nest the live label, then re-run."
+        } else {
+            "  - '$($m.Label.DisplayName)' (Id: $($m.Identity)) is at priority $($m.Actual); expected $($m.Expected) [reason: $($m.Reason)]"
+        }
     }
     $detail = "Sensitivity label priority order is incorrect after reorder + recovery:`n" + ($lines -join "`n")
     Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'Verify-LabelPriority' `
@@ -1370,7 +1833,7 @@ if ($policyCfg.PublishedLabels -and @($policyCfg.PublishedLabels).Count -gt 0) {
 # matched by DisplayName on an adopted label.
 $allLabelNames = @()
 foreach ($lbl in $Config.Labels) {
-    $resolved = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName
+    $resolved = Get-LabelByName -Name $lbl.Name -DisplayName $lbl.DisplayName -Scope 'TopLevel'
     $includeParent = (-not $publishFilter) -or $publishFilter.Contains($lbl.Name)
     if ($includeParent) {
         if ($resolved) {
@@ -1382,7 +1845,8 @@ foreach ($lbl in $Config.Labels) {
     if ($lbl.SubLabels) {
         $parentId = if ($resolved) { $resolved.Guid } else { $null }
         foreach ($s in $lbl.SubLabels) {
-            $rs = Get-LabelByName -Name $s.Name -DisplayName $s.DisplayName -ParentId $parentId
+            $subScope = if ($parentId) { 'Parent' } else { 'Any' }
+            $rs = Get-LabelByName -Name $s.Name -DisplayName $s.DisplayName -ParentId $parentId -Scope $subScope
             $includeSub = (-not $publishFilter) -or $publishFilter.Contains($s.Name)
             if (-not $includeSub) { continue }
             if ($rs) {

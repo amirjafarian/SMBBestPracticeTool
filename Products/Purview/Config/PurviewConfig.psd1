@@ -41,40 +41,40 @@
     #   * General                                      — no protection (default for EMAIL)
     #   * Confidential                                 — no protection (parent)
     #     * Confidential \ All Employees               — Footer only (default for DOCUMENTS)
-    #     * Confidential \ Specific People             — Footer only
+    #     * Confidential \ Specific People             — Footer + UserDefined encryption (Outlook: Do Not Forward)
     #     * Confidential \ Internal Exception          — Footer only
     #   * Highly Confidential                          — Watermark "HIGHLY CONFIDENTIAL"
-    #     * Highly Confidential \ All Employees        — Footer + Template encryption
+    #     * Highly Confidential \ All Employees        — Footer + Template encryption (tenant-scoped)
     #     * Highly Confidential \ Specific People      — Footer + UserDefined encryption (Outlook: Do Not Forward)
-    #     * Highly Confidential \ Internal Exception   — Footer + Template encryption
+    #     * Highly Confidential \ Internal Exception   — Footer + Template encryption (tenant-scoped)
     #
     # Encryption / protection
     # -----------------------
-    # Protection (encryption + access rights) is enabled ONLY on the three
-    # Highly Confidential sub-labels. Confidential sub-labels carry visual
-    # markings (footer) but no encryption — this is the SMB-friendly profile
-    # because encryption on Confidential breaks too many third-party
-    # integrations and external collaboration scenarios for typical SMB
-    # customers.
+    # Template-protected labels (HC \ All Employees, HC \ Internal Exception)
+    # grant the configured rights bundle to ALL USERS IN YOUR TENANT ONLY —
+    # not external authenticated identities from other Microsoft 365 tenants.
+    # The toolkit auto-resolves your tenant's verified domain at runtime and
+    # substitutes it into `EncryptionRightsDefinitions` (see comment at that
+    # field below for the token syntax and fallback behaviour).
     #
-    # The default rights bundle for encrypted labels is Microsoft's
-    # "Reviewer" set: users in the tenant get View, View Rights, Edit
-    # Content, Save, Reply, Reply All, Forward. Co-authoring (auto-save +
-    # simultaneous editing in Office) and macros / programmatic access via
-    # the Office object model are NOT included by default, because OBJMODEL
-    # access is the main vector by which third-party apps reading doc
-    # metadata break under encryption.
+    # UserDefined-protected labels (both Specific People sub-labels) let the
+    # user pick the recipients and permissions at apply time. Outlook
+    # behaviour is "Do Not Forward"; Office apps (Word, Excel, PowerPoint)
+    # prompt the user to assign permissions.
     #
-    # To enable the full Co-Author bundle (adds Copy, Print, Allow Macros)
-    # at deploy time, pass -EnableCoAuth to Setup-SensitivityLabels.ps1 or
-    # Deploy-PurviewBestPractice.ps1. The script then uses
-    # `EncryptionRightsDefinitionsCoAuth` instead of
-    # `EncryptionRightsDefinitions`.
+    # The default Template rights bundle is Microsoft's "Reviewer" set:
+    # users get View, View Rights, Edit Content, Save, Reply, Reply All,
+    # Forward. Co-authoring (auto-save + simultaneous editing in Office)
+    # and macros / programmatic access via the Office object model are NOT
+    # included by default, because OBJMODEL access is the main vector by
+    # which third-party apps reading doc metadata break under encryption.
     #
-    # Highly Confidential \ Specific People uses USER-DEFINED encryption
-    # (the user picks who gets access at apply time). Outlook behaviour is
-    # "Do Not Forward"; Office apps (Word, Excel, PowerPoint) prompt the
-    # user to assign permissions.
+    # If you need a wider rights bundle (e.g. Copy, Print, Allow Macros for
+    # third-party tooling), edit `EncryptionRightsDefinitions` below
+    # directly — typically by appending `,EXTRACT,PRINT,OBJMODEL` to the
+    # `{TenantDomain}:` rights string. Validate in a pilot tenant before
+    # rolling out, since OBJMODEL access affects every third-party app that
+    # reads Office document metadata.
     #
     # Auto-labeling (client-side and service-side) is intentionally NOT
     # configured here. Add it deliberately via the Purview portal once your
@@ -88,11 +88,22 @@
     # with its parent (e.g. `HCAllEmps`). The `AllEmployees` Name on
     # Confidential is preserved unchanged so existing DLP rules with
     # `LabelPath = 'Confidential/AllEmployees'` keep resolving.
+    #
+    # Label color
+    # -----------
+    # Each label has an optional `Color = '#RRGGBB'` hex string. The toolkit
+    # applies it via `New-Label`/`Set-Label -AdvancedSettings @{color=...}`
+    # so the colour shows up next to the label in Office and Purview. Defaults
+    # below mirror Microsoft's recommended palette (green=Public, blue=General,
+    # amber=Confidential family, red=Highly Confidential family). Sub-labels
+    # inherit their parent's family colour. To disable, remove the `Color`
+    # entry — the toolkit will leave the label's current colour unchanged.
     Labels = @(
         @{
             Name        = 'Public'
             DisplayName = 'Public'
             Tooltip     = 'Business data that is specifically prepared and approved for public consumption.'
+            Color       = '#13A10E'
             Encrypt     = $false
             ContentMark = $false
         }
@@ -100,6 +111,7 @@
             Name        = 'General'
             DisplayName = 'General'
             Tooltip     = 'Business data that is not intended for public consumption. However, this can be shared with external partners, as required. Examples include a company internal telephone directory, organizational charts, internal standards, and most internal communication.'
+            Color       = '#3A96DD'
             Encrypt     = $false
             ContentMark = $false
         }
@@ -107,6 +119,7 @@
             Name        = 'Confidential'
             DisplayName = 'Confidential'
             Tooltip     = 'Sensitive business data that could cause damage to the business if shared with unauthorized people. Examples include contracts, security reports, forecast summaries, and sales account data.'
+            Color       = '#EAA300'
             Encrypt     = $false
             ContentMark = $false
             SubLabels   = @(
@@ -116,6 +129,7 @@
                     Name        = 'AllEmployees'
                     DisplayName = 'All Employees'
                     Tooltip     = 'Confidential data shared internally with all employees. No encryption is applied; the label is informational and adds a footer marking.'
+                    Color       = '#EAA300'
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
@@ -123,8 +137,11 @@
                 @{
                     Name        = 'ConfidentialSpecificPeople'
                     DisplayName = 'Specific People'
-                    Tooltip     = 'Confidential data shared with specific people inside or outside the organization. No encryption is applied; the label is informational and adds a footer marking.'
-                    Encrypt     = $false
+                    Tooltip     = 'Confidential data shared with specific people inside or outside the organization. Encryption is applied at apply time; the user picks who gets access (Outlook: Do Not Forward).'
+                    Color       = '#EAA300'
+                    Encrypt     = $true
+                    ProtectionType = 'UserDefined'
+                    UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
                 }
@@ -132,6 +149,7 @@
                     Name        = 'ConfidentialInternalException'
                     DisplayName = 'Internal Exception'
                     Tooltip     = 'Confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). No encryption is applied; the label is informational and adds a footer marking.'
+                    Color       = '#EAA300'
                     Encrypt     = $false
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
@@ -142,6 +160,7 @@
             Name        = 'HighlyConfidential'
             DisplayName = 'Highly Confidential'
             Tooltip     = 'Very sensitive business data that would cause damage to the business if it was shared with unauthorized people. Examples include employee and customer information, passwords, source code, and pre-announced financial reports.'
+            Color       = '#A4262C'
             Encrypt     = $false
             ContentMark = $true
             WatermarkText = 'HIGHLY CONFIDENTIAL'
@@ -149,9 +168,29 @@
                 @{
                     Name        = 'HCAllEmps'
                     DisplayName = 'All Employees'
-                    Tooltip     = 'Highly confidential data that allows all employees view, edit, and reply permissions to this content. Data owners can track and revoke content.'
+                    Tooltip     = 'Highly confidential data with Co-Author rights for all users in this tenant only (view, edit, save, copy, print, allow macros, reply, forward). Data owners can track and revoke content.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'Template'
+                    # Per-label override for the rights bundle. Uses the
+                    # Microsoft "Co-Author" set instead of the toolkit's
+                    # global Reviewer default — Co-Author adds EXTRACT
+                    # (copy), PRINT, and OBJMODEL (Office object-model
+                    # access, needed for macros + simultaneous editing).
+                    # `{TenantDomain}` resolves to all users in this
+                    # tenant only (matches the global scope; excludes
+                    # external / B2B / MSA). See header comment above
+                    # and Skills/Purview/_CONVENTIONS.md for the full
+                    # semantics.
+                    #
+                    # NOTE: granting OBJMODEL is NECESSARY BUT NOT
+                    # SUFFICIENT for Office multi-user co-authoring on
+                    # encrypted files. The tenant-wide switch
+                    # `-EnableLabelCoAuthoring` (Set-PolicyConfig
+                    # -EnableLabelCoauth:$true, opt-in) must also be on.
+                    # Without both, users get individual edit rights but
+                    # not concurrent editing.
+                    EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,OBJMODEL,REPLY,REPLYALL,FORWARD'
                     ContentMark = $true
                     FooterText  = 'Classified as Highly Confidential'
                 }
@@ -159,6 +198,7 @@
                     Name        = 'HCSpecificPeople'
                     DisplayName = 'Specific People'
                     Tooltip     = 'Highly confidential data that requires protection and can be viewed only by people you specify and with the permission level you choose.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'UserDefined'
                     UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
@@ -169,6 +209,7 @@
                     Name        = 'HCInternalException'
                     DisplayName = 'Internal Exception'
                     Tooltip     = 'Highly confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). Encrypts content with all-employees rights so it cannot leave the tenant.'
+                    Color       = '#A4262C'
                     Encrypt     = $true
                     ProtectionType = 'Template'
                     ContentMark = $true
@@ -178,23 +219,52 @@
         }
     )
 
-    # ----- Encryption rights bundles -----
-    # Two pre-defined rights strings. The script picks one based on whether
-    # -EnableCoAuth is passed. Both grant rights to AuthenticatedUsers, which
-    # includes B2B guests, social/MSA accounts, and OTP users.
+    # ----- Encryption rights bundle -----
+    # Microsoft's "Reviewer" bundle: View, View Rights, Edit Content, Save,
+    # Reply, Reply All, Forward.
     #
-    # DEFAULT — Microsoft's "Reviewer" bundle:
-    #   View, View Rights, Edit Content, Save, Reply, Reply All, Forward.
-    #   Co-authoring (auto-save + simultaneous editing) and macro / object-
-    #   model access are NOT granted, which is the safe default when third-
-    #   party apps consume Office documents in your tenant.
-    EncryptionRightsDefinitions = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
+    # IDENTITY token (one of):
+    #   * `{TenantDomain}`        — RECOMMENDED. Resolved at runtime to the
+    #     tenant's primary verified domain (e.g. `contoso.com`). Per Microsoft
+    #     Entra rights-management semantics, specifying ANY verified domain
+    #     in the tenant automatically expands to ALL verified domains in that
+    #     tenant — so the label is accessible to every user in your tenant
+    #     but NOT to external authenticated users from other M365 tenants
+    #     (which `AuthenticatedUsers` would include). If the toolkit cannot
+    #     resolve the tenant domain at runtime, it FAILS CLOSED (throws an
+    #     error and writes a Failed run-log entry) rather than silently
+    #     widening scope to `AuthenticatedUsers`. Re-run after fixing
+    #     connectivity, or opt in to broad scope explicitly with
+    #     `{AuthenticatedUsers}` / literal `AuthenticatedUsers`.
     #
-    # WITH -EnableCoAuth — Microsoft's "Co-Author" bundle:
-    #   adds Copy (EXTRACT), Print, Allow Macros (OBJMODEL). Required for
-    #   Office co-authoring and any third-party tooling that uses the Office
-    #   object model (e.g. some DLP scanners, custom macros).
-    EncryptionRightsDefinitionsCoAuth = 'AuthenticatedUsers:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
+    #   * `AuthenticatedUsers`    — Microsoft's broad "any signed-in M365
+    #     identity" group. Includes B2B guests, partners, and any external
+    #     Entra user. Use this only if you intentionally need to share
+    #     encrypted content across tenants.
+    #
+    #   * `user@domain.com`       — A specific mail-enabled user / group /
+    #     mailbox in your tenant. Useful for narrow-scope custom labels.
+    #
+    # Co-authoring (auto-save + simultaneous editing) and macro / object-
+    # model access are NOT granted, which is the safe default when third-
+    # party apps consume Office documents in your tenant.
+    #
+    # If you need a wider bundle (the Microsoft "Co-Author" set adds Copy
+    # (EXTRACT), Print, Allow Macros (OBJMODEL)), edit the string below
+    # directly. The "Co-Author" equivalent is:
+    #   '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,EXTRACT,PRINT,REPLY,REPLYALL,FORWARD,OBJMODEL'
+    # OBJMODEL is the right that most often breaks third-party apps reading
+    # doc metadata, so validate in a pilot tenant before promoting.
+    #
+    # PER-LABEL OVERRIDE:
+    # Any label with `Encrypt=$true / ProtectionType='Template'` may carry
+    # its own `EncryptionRightsDefinitions = '...'` field, which overrides
+    # this global default JUST for that label. Same token semantics apply
+    # ({TenantDomain}, {AuthenticatedUsers}, literal identity). Used by
+    # `HighlyConfidential\All Employees` (HCAllEmps) to grant the wider
+    # Co-Author bundle (allows copy, print, macros, Office co-authoring)
+    # while sibling sub-labels stay on the narrower Reviewer default.
+    EncryptionRightsDefinitions = '{TenantDomain}:VIEW,VIEWRIGHTSDATA,EDIT,DOCEDIT,REPLY,REPLYALL,FORWARD'
 
     EncryptionContentExpiredOnDateInDaysOrNever = 'Never'
     EncryptionOfflineAccessDays = 30
@@ -441,6 +511,18 @@
         EnableUnifiedAuditLog        = $true
         EnableSensitivityLabelForPDF = $true
         EnableAIPIntegrationInSPO    = $true
-        EnableLabelCoAuth            = $true
+        # Tenant-wide label co-authoring metadata-format switch
+        # (Set-PolicyConfig -EnableLabelCoauth). DEFAULT-OFF and operator
+        # opt-in via -EnableLabelCoAuthoring on
+        # Deploy-PurviewBestPractice.ps1. This switch is ONE-WAY: once
+        # enabled, label metadata moves out of custom properties; disabling
+        # it later loses labels on unencrypted Office files. Any app,
+        # service, scanner or script reading doc metadata from the old
+        # location (AIP scanner < v3.0, OneDrive sync < 19.002, MIP SDK
+        # < 1.7, custom DLP scanners, custom Exchange mail-flow rules,
+        # etc.) will break. The toolkit refuses to flip this on partner
+        # tenants by default to avoid taking responsibility for that risk.
+        # Ref: https://learn.microsoft.com/purview/sensitivity-labels-coauthoring
+        EnableLabelCoAuth            = $false
     }
 }
