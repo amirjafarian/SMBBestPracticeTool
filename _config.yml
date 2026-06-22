@@ -45,8 +45,8 @@ exclude:
   # Per-run deployment reports (also gitignored, but defensive).
   - "**/Deploy-*-Report-*.html"
   - "**/Deploy-*-Report-*.json"
-  # Standalone HTML adoption guide (it's a downloadable artifact, not a page).
-  - "Products/Purview/docs/End-User-Adoption-Guide.html"
+  # Standalone HTML adoption guide is published (embedded in its docs page);
+  # the .docx is a binary download and stays excluded.
   - "Products/Purview/docs/End-User-Adoption-Guide.docx"
   - "Products/Purview/docs/What-This-Tool-Does.html"
   # Code / data / sample directories — not docs.
