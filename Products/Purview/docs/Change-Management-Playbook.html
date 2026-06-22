@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Change-Management Playbook — Purview deployment timeline</title>
+<meta name="description" content="Partner delivery timeline for the Microsoft Purview baseline: pre-deploy (T-7), day-of (T-0), day 1-5 soak, and the day-30 promote-from-simulation gate.">
+<style>
+  :root{
+    --brand:#0f6cbd;
+    --brand-dark:#0c4f8a;
+    --bg:#ffffff;
+    --surface:#f7f9fc;
+    --surface-2:#eef3f8;
+    --ink:#1b1b1b;
+    --muted:#5f6b7a;
+    --border:#dfe5ec;
+    --shadow:0 1px 2px rgba(0,0,0,.04), 0 2px 6px rgba(0,0,0,.04);
+
+    --on:#107c10;        --on-bg:#e6f4ea;        --on-border:#b6dfc3;
+    --opt:#b86e00;       --opt-bg:#fff4e0;       --opt-border:#f0c989;
+    --auto:#005b70;      --auto-bg:#e3f0f3;      --auto-border:#a7ced8;
+    --off:#444;          --off-bg:#eeeeee;       --off-border:#cccccc;
+    --risk:#a4262c;      --risk-bg:#fde7e9;      --risk-border:#f1b5b9;
+    --info:#0f6cbd;      --info-bg:#e8f1fa;      --info-border:#a8cbed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:'Segoe UI Variable','Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--surface);color:var(--ink);
+    font-size:15px;line-height:1.55;
+  }
+  code{font-family:Consolas,'Courier New',Courier,monospace;background:var(--surface-2);
+    padding:1px 5px;border-radius:5px;font-size:.86em;border:1px solid var(--border)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px 80px}
+
+  header.page{
+    background:linear-gradient(140deg,#0f6cbd 0%, #0c4f8a 100%);
+    color:#fff;padding:38px 28px 32px;margin:0 -24px 28px;border-radius:0 0 18px 18px;
+  }
+  .eyebrow{font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;opacity:.85;font-weight:600}
+  header.page h1{margin:6px 0 8px;font-size:30px;letter-spacing:-.01em}
+  header.page .lede{font-size:1.02rem;max-width:80ch;opacity:.96;margin:0}
+  .aud{margin-top:14px;font-size:.86rem;background:rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:10px 14px;max-width:80ch}
+
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 6px}
+  .pill{font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:999px;
+    display:inline-flex;align-items:center;gap:7px;border:1px solid}
+  .pill .dot{width:9px;height:9px;border-radius:50%}
+  .pill.partner{background:var(--info-bg);border-color:var(--info-border);color:var(--brand-dark)}
+  .pill.partner .dot{background:var(--brand)}
+  .pill.customer{background:var(--opt-bg);border-color:var(--opt-border);color:var(--opt)}
+  .pill.customer .dot{background:var(--opt)}
+  .pill.gate{background:var(--risk-bg);border-color:var(--risk-border);color:var(--risk)}
+  .pill.gate .dot{background:var(--risk)}
+
+  /* timeline */
+  .timeline{position:relative;margin:22px 0 0;padding-left:46px}
+  .timeline::before{content:"";position:absolute;left:18px;top:8px;bottom:18px;width:3px;
+    background:linear-gradient(180deg,var(--opt) 0%, var(--brand) 32%, var(--brand) 68%, var(--on) 100%);
+    border-radius:3px}
+  .node{position:relative;margin-bottom:26px}
+  .node .marker{position:absolute;left:-46px;top:2px;width:38px;height:38px;border-radius:50%;
+    display:grid;place-items:center;font-size:18px;color:#fff;box-shadow:var(--shadow);border:3px solid var(--surface)}
+  .node.pre .marker{background:var(--opt)}
+  .node.deploy .marker{background:var(--brand)}
+  .node.soak .marker{background:#2e8bd6}
+  .node.gate .marker{background:var(--risk)}
+  .node.post .marker{background:var(--on)}
+
+  .card{background:var(--bg);border:1px solid var(--border);border-radius:14px;
+    padding:18px 20px;box-shadow:var(--shadow)}
+  .node.gate .card{border-color:var(--risk-border);box-shadow:0 0 0 3px var(--risk-bg),var(--shadow)}
+  .card .when{font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .card h2{margin:3px 0 4px;font-size:1.28rem}
+  .card .sub{color:var(--muted);font-size:.92rem;margin:0 0 12px}
+
+  ul.acts{margin:0;padding-left:18px}
+  ul.acts li{margin:6px 0}
+  ul.acts li b{color:var(--ink)}
+  .who{font-size:.7rem;font-weight:700;border-radius:6px;padding:1px 7px;margin-left:4px;
+    border:1px solid var(--info-border);background:var(--info-bg);color:var(--brand-dark);white-space:nowrap}
+  .who.cust{background:var(--opt-bg);border-color:var(--opt-border);color:var(--opt)}
+
+  .panel{margin-top:14px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:10px;padding:13px 15px}
+  .panel h3{margin:0 0 8px;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .panel.warn{background:var(--opt-bg);border-color:var(--opt-border)}
+  .panel.warn h3{color:var(--opt)}
+  .panel.info{background:var(--info-bg);border-color:var(--info-border)}
+  .panel.info h3{color:var(--brand-dark)}
+  .panel ul{margin:0;padding-left:18px}
+  .panel li{margin:4px 0;font-size:.9rem}
+
+  table.dec{width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem}
+  table.dec th,table.dec td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+  table.dec th{background:var(--surface-2);font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+
+  .sharp{margin-top:30px}
+  .sharp h2{font-size:1.2rem;margin:0 0 4px}
+  .sharp .lede{color:var(--muted);margin:0 0 14px;font-size:.92rem}
+  .sharp-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .sharp-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 15px}
+  .sharp-card.risk{border-left:4px solid var(--risk)}
+  .sharp-card h4{margin:0 0 6px;font-size:.96rem}
+  .sharp-card p{margin:0;font-size:.86rem;color:var(--muted)}
+
+  footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--border);
+    font-size:.8rem;color:var(--muted)}
+
+  @media (max-width:760px){
+    header.page h1{font-size:24px}
+    .sharp-grid{grid-template-columns:1fr}
+    .timeline{padding-left:40px}
+    .node .marker{left:-40px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page">
+  <div class="eyebrow">Microsoft Purview Best Practice Toolkit · Partner Edition</div>
+  <h1>Change-Management Playbook</h1>
+  <p class="lede">The script handles the engineering. <b>This playbook is what makes it safe in
+    production.</b> Several defaults have customer-visible consequences the moment they take effect —
+    silent labelling on every new document, 7-year mail deletion, DLP blocking external sends.
+    Follow this timeline so the deploy lands as a planned change, not a help-desk ticket generator.</p>
+  <div class="aud"><b>Audience:</b> the partner consultant / MSP delivery lead. For the end-user-facing
+    companion (what employees see + ready-to-send comms), see the <b>End-User Adoption Guide</b>.</div>
+</header>
+
+<div class="legend" aria-label="Owner legend">
+  <span class="pill partner"><span class="dot"></span>Partner action</span>
+  <span class="pill customer"><span class="dot"></span>Needs customer input</span>
+  <span class="pill gate"><span class="dot"></span>Decision gate</span>
+</div>
+
+<div class="timeline">
+
+  <!-- PHASE 0 -->
+  <div class="node pre">
+    <div class="marker">📋</div>
+    <div class="card">
+      <div class="when">Phase 0 · T-7 days</div>
+      <h2>Pre-deploy — plan the change</h2>
+      <p class="sub">Nothing touches the tenant yet. This phase exists to make the rest predictable.</p>
+      <ul class="acts">
+        <li><b>Confirm tenant SKU</b> — Business Premium vs E5 / Purview Suite. Decides whether <code>-BPOnly</code> is needed; AI governance is default-on for E5 / Purview Suite.<span class="who">Partner</span></li>
+        <li><b>Confirm vertical &amp; regulatory framework</b> — decides whether to enable retention and at what duration (7-year delete is opt-in).<span class="who cust">Partner + Customer</span></li>
+        <li><b>Inventory current Purview state</b> — existing labels / DLP / retention. Decide <code>-AdoptExisting</code> vs rename/archive.<span class="who">Partner</span></li>
+        <li><b>Identify B2B guest exposure</b> — routine external guests change the encryption scope picture.<span class="who cust">Partner + Customer</span></li>
+        <li><b>Pick a pilot mailbox / site</b> for retention &amp; DLP simulation review.<span class="who cust">Partner + Customer</span></li>
+        <li><b>Schedule the deploy window AND the day-30 review</b> in the same calendar invite.<span class="who">Partner</span></li>
+        <li><b>Draft user comms</b> — sent the day before deploy.<span class="who">Partner</span></li>
+      </ul>
+      <div class="panel">
+        <h3>Decisions to lock before you run the script</h3>
+        <ul>
+          <li><code>-BPOnly</code> · <code>-SkipAIControls</code> · <code>-ApplyRetention</code> (+ duration) · <code>-SkipContainerLabels</code></li>
+          <li><code>-EnablePremiumAudit</code> (+ mailboxes) · <code>-EnableLabelCoAuthoring</code> <b>(one-way!)</b></li>
+          <li><code>EnableContentMarking</code> in config — leave <code>$false</code> for initial deploy; flip after day-30</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 1 -->
+  <div class="node deploy">
+    <div class="marker">🚀</div>
+    <div class="card">
+      <div class="when">Phase 1 · T-0</div>
+      <h2>Day-of deploy</h2>
+      <p class="sub">Preview, apply during the agreed window, and verify simulation mode before anyone notices.</p>
+      <ul class="acts">
+        <li>Run with <b><code>-WhatIf</code> first</b>; capture the full transcript.</li>
+        <li><b>Diff</b> the preview against the Phase 0 inventory — nothing unexpected created/adopted.</li>
+        <li>Run in <b>apply mode</b> during the agreed window.</li>
+        <li><b>Save the deploy log + preflight banner</b> to the customer record (audit trail).</li>
+        <li>In the Purview portal, confirm objects exist and are stamped <code>[Managed by SMBTool Purview Toolkit]</code>.</li>
+        <li><b>Verify DLP simulation mode</b> — one policy should read "Test with notifications off". Zero user impact day one.</li>
+        <li>Send the "deploy complete" comms.</li>
+      </ul>
+      <div class="panel warn">
+        <h3>Common day-of surprises</h3>
+        <ul>
+          <li><code>Connect-SPOService</code> clashes when EXO/Graph/Az/PnP are pre-loaded — pass <code>-SharePointAdminUrl</code> on vanity-UPN tenants.</li>
+          <li><code>Set-Label -Priority</code> throws on pre-existing top-level labels — audit existing labels in Phase 0.</li>
+          <li>IPPS can report success before settings are live — wait 5–10 min and refresh; the script retries known races.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="node soak">
+    <div class="marker">🔎</div>
+    <div class="card">
+      <div class="when">Phase 2 · Day 1–5</div>
+      <h2>Soak &amp; monitor</h2>
+      <p class="sub">Labels are live; DLP only observes. Watch the signals before anything enforces.</p>
+      <ul class="acts">
+        <li><b>Day 1 AM:</b> check the helpdesk queue for Purview-related tickets.</li>
+        <li><b>Day 1:</b> confirm <code>General</code> is the Outlook default and <code>Confidential\AllEmployees</code> the Office default.</li>
+        <li><b>Day 1–3:</b> pilot owner sends a labelled doc externally — confirm the hit shows in Activity Explorer (no block — simulation).</li>
+        <li><b>Day 3:</b> review Activity Explorer for unexpected match patterns (often a customer process, not a bug).</li>
+        <li><b>Day 5:</b> spot-check audit-log entries to confirm <code>UnifiedAuditLog</code> captures label events.</li>
+      </ul>
+      <div class="panel info">
+        <h3>What the customer sees this week</h3>
+        <ul>
+          <li>Users <b>will</b> see new labels in Outlook / Word / Excel / PowerPoint on day 1.</li>
+          <li>They <b>will not</b> be blocked from anything yet (DLP is in simulation).</li>
+          <li>Footers / watermarks are <b>not</b> shown unless <code>EnableContentMarking = $true</code> (off by default until day-30).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASE 3 - GATE -->
+  <div class="node gate">
+    <div class="marker">🚦</div>
+    <div class="card">
+      <div class="when">Phase 3 · Day ~30 · THE GATE</div>
+      <h2>Promote-from-simulation gate</h2>
+      <p class="sub">The conversation most deploys skip — and the one that decides whether DLP becomes
+        real protection or shelfware.</p>
+      <div class="panel info">
+        <h3>Inputs to the conversation</h3>
+        <ul>
+          <li><b>DLP Activity Explorer report</b> — "what would have been blocked" (see the DLP Simulation Exit Runbook).</li>
+          <li><b>Helpdesk ticket count</b> related to labels / DLP since day-of.</li>
+          <li><b>Pilot feedback</b> — any complaints about labels, footers, or anything else?</li>
+        </ul>
+      </div>
+      <table class="dec">
+        <tr><th>Decision</th><th>Options</th><th>How to action</th></tr>
+        <tr><td>Promote DLP out of simulation?</td><td>Promote / extend / refine first</td><td>Flip <code>DlpStartInSimulation = $false</code> &amp; re-run, or toggle per policy in portal</td></tr>
+        <tr><td>Turn on content marking?</td><td>Yes / no</td><td>Flip <code>EnableContentMarking = $true</code> &amp; re-run</td></tr>
+        <tr><td>Tighten Endpoint DLP (E5)?</td><td>Audit → Block / Warn</td><td>Edit <code>EndpointDlpRestrictions[].Value</code> &amp; re-run</td></tr>
+        <tr><td>Reconfirm retention</td><td>Enable / keep off / change duration</td><td><code>-ApplyRetention</code> on re-run, or edit <code>Retention.DurationDays</code></td></tr>
+        <tr><td>Add SPO / OneDrive to retention?</td><td>Yes / no</td><td>Add to <code>Retention.Locations</code></td></tr>
+      </table>
+      <div class="panel">
+        <h3>Output (don't skip)</h3>
+        <ul>
+          <li>A signed-off "Phase 3 outcome" note on the customer record listing the decisions + the timestamp of the re-run. Without it, nobody can later answer <i>"is this tenant production-grade Purview, or still in simulation?"</i></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- POST -->
+  <div class="node post">
+    <div class="marker">✅</div>
+    <div class="card">
+      <div class="when">Ongoing</div>
+      <h2>Operate &amp; re-run</h2>
+      <p class="sub">The deployment is idempotent — re-run any time to verify or extend the baseline.</p>
+      <ul class="acts">
+        <li>Send the Day +30 adoption comms (enforcement is now live for promoted policies).</li>
+        <li>Keep the deploy reports as the configuration baseline + audit trail.</li>
+        <li>Any future change re-enters this same simulate-then-promote method.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<div class="sharp">
+  <h2>Known sharp edges — cover these in Phase 0</h2>
+  <p class="lede">Not bugs — defaults that are correct technically but need a customer conversation.</p>
+  <div class="sharp-grid">
+    <div class="sharp-card risk">
+      <h4>Encrypted-label rights are tenant-scoped, not retroactive</h4>
+      <p>The <code>{TenantDomain}</code> token scopes HC encryption rights to your tenant's users only (excludes external B2B guests). Tightening the template does <b>not</b> revoke access on files labelled earlier — owners must re-apply the label.</p>
+    </div>
+    <div class="sharp-card">
+      <h4>"Specific People" labels prompt the user</h4>
+      <p>The Specific People sub-labels use UserDefined encryption — the author picks recipients each time. Expect a prompt; it's by design.</p>
+    </div>
+    <div class="sharp-card risk">
+      <h4>Co-authoring is a one-way switch</h4>
+      <p><code>-EnableLabelCoAuthoring</code> moves label metadata out of custom properties. Disabling later is PowerShell-only and loses labels on unencrypted Office files; older AIP scanner / OneDrive sync / MIP SDK / custom scanners break. Only enable after confirming none are in use.</p>
+    </div>
+    <div class="sharp-card">
+      <h4>Mandatory labelling prompts on save/send</h4>
+      <p>Every Office app prompts for a label before saving a new doc or sending new mail. This closes the untagged-content hole DLP/Copilot rely on — but tell users first (training beats surprise).</p>
+    </div>
+  </div>
+  <p class="lede" style="margin-top:14px">Full detail, including the rights bundles and mitigations, is in the text version below this guide.</p>
+</div>
+
+<footer>
+  Change-Management Playbook (Partner Edition) for the <b>SMB Best Practice Tool · Microsoft Purview</b>
+  toolkit. A delivery-method guide for partners / MSP delivery leads — authoritative behaviour lives in
+  <code>Deploy-PurviewBestPractice.ps1</code> and <code>PurviewConfig.psd1</code>. Provided AS IS with no warranty.
+</footer>
+
+</div>
+</body>
+</html>

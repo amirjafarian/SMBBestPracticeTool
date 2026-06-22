@@ -8,9 +8,15 @@ customer tenants.
 
 ## Products
 
-| Product | Toolkit | Status |
-|---------|---------|--------|
-| Microsoft Purview (Data Security baseline for Business Premium) | [`Products/Purview/`](Products/Purview/README.md) | Available |
+| Product | Toolkit | Docs | Status |
+|---------|---------|------|--------|
+| Microsoft Purview (Data Security baseline for Business Premium) | [`Products/Purview/`](Products/Purview/README.md) | [Site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/) | Available |
+
+> 📖 **Full documentation site:** <https://amirjafarian.github.io/SMBBestPracticeTool/>
+> — searchable HTML version of every product's docs, with sidebar
+> navigation and per-product landing pages. Source markdown stays in
+> `Products/<Product>/docs/`; the site is built by GitHub Pages from
+> the same files.
 
 ## Prerequisites (at a glance)
 

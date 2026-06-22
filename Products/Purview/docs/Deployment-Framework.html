@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Purview Deployment Framework — Simulate-Then-Promote</title>
+<script>
+  // Theme detection — runs first, before any other JS.
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const stored = (() => { try { return localStorage.getItem("cpTheme"); } catch (e) { return null; } })();
+    const theme =
+      param || stored ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f9fc;
+  --cp-bg-elevated: #ffffff;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #eef3f8;
+  --cp-border: #dfe5ec;
+  --cp-border-strong: #b9c4d0;
+  --cp-text: #1b1b1b;
+  --cp-text-muted: #5f6b7a;
+  --cp-text-soft: #6f7d8c;
+  --cp-accent: #0f6cbd;
+  --cp-accent-hover: #0c4f8a;
+  --cp-accent-soft: rgba(15, 108, 189, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #107c10;
+  --cp-danger: #a4262c;
+  --cp-warning: #b86e00;
+  --cp-link: #0f6cbd;
+  --cp-shadow: 0 18px 48px rgba(15, 39, 71, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(15, 108, 189, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #0e1a29;
+  --cp-bg-elevated: #13243a;
+  --cp-surface: #16283f;
+  --cp-surface-soft: #1d3148;
+  --cp-border: #2b405a;
+  --cp-border-strong: #3e5878;
+  --cp-text: #e6edf5;
+  --cp-text-muted: #9fb1c6;
+  --cp-text-soft: #b6c5d8;
+  --cp-accent: #4da6ff;
+  --cp-accent-hover: #6cb6ff;
+  --cp-accent-soft: rgba(77, 166, 255, 0.16);
+  --cp-accent-fg: #0a1422;
+  --cp-success: #4ade80;
+  --cp-danger: #f87171;
+  --cp-warning: #fbbf24;
+  --cp-link: #6cb6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --cp-overlay: rgba(14, 26, 41, 0.88);
+  --cp-panel: rgba(14, 26, 41, 0.72);
+  --cp-panel-strong: rgba(14, 26, 41, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-highlight: rgba(77, 166, 255, 0.14);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: Consolas, "Courier New", Courier, monospace; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 64px; }
+
+/* ---------- Header ---------- */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 22px;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand .logo {
+  width: 42px; height: 42px; border-radius: 10px; flex: none;
+  background: var(--cp-accent); color: var(--cp-accent-fg);
+  display: grid; place-items: center; font-weight: 700; font-size: 18px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+}
+.brand h1 { font-size: 1.18rem; margin: 0; line-height: 1.2; }
+.brand .sub { font-size: 0.82rem; color: var(--cp-text-muted); }
+
+.controls { display: flex; gap: 8px; align-items: center; }
+.btn {
+  appearance: none; border: 1px solid var(--cp-border); background: var(--cp-surface);
+  color: var(--cp-text); border-radius: 0.625rem; padding: 8px 12px; font-size: 0.84rem;
+  cursor: pointer; font-family: inherit; transition: border-color .15s, background .15s;
+}
+.btn:hover { border-color: var(--cp-border-strong); }
+.btn.primary { background: var(--cp-accent); border-color: var(--cp-accent); color: var(--cp-accent-fg); }
+.btn.primary:hover { background: var(--cp-accent-hover); border-color: var(--cp-accent-hover); }
+
+/* ---------- Hero ---------- */
+.hero {
+  background: var(--cp-surface); border: 1px solid var(--cp-border);
+  border-radius: 16px; padding: 24px 26px; margin-bottom: 24px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+}
+.hero h2 { margin: 0 0 8px; font-size: 1.5rem; letter-spacing: -0.01em; }
+.hero .goal { font-size: 1.02rem; color: var(--cp-text); max-width: 80ch; }
+.hero .goal b { color: var(--cp-accent); }
+.signature { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.tag {
+  font-size: 0.76rem; padding: 5px 10px; border-radius: 999px;
+  background: var(--cp-accent-soft); color: var(--cp-accent);
+  border: 1px solid var(--cp-accent-soft); font-weight: 600; white-space: nowrap;
+}
+.tag::before { content: "✓ "; }
+
+/* ---------- Phase flow ---------- */
+.section-label {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--cp-text-soft); font-weight: 700; margin: 26px 2px 12px;
+}
+.flow {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; position: relative;
+}
+.phase {
+  position: relative; text-align: left; cursor: pointer; font-family: inherit;
+  background: var(--cp-surface); color: var(--cp-text);
+  border: 1px solid var(--cp-border); border-radius: 14px; padding: 14px 12px 13px;
+  display: flex; flex-direction: column; gap: 7px; min-height: 132px;
+  transition: transform .14s, border-color .14s, box-shadow .14s;
+}
+.phase:hover { transform: translateY(-3px); border-color: var(--cp-border-strong); }
+.phase.active {
+  border-color: var(--cp-accent);
+  box-shadow: 0 0 0 2px var(--cp-accent-soft), var(--cp-shadow);
+}
+.phase .pnum {
+  font-size: 0.68rem; font-weight: 700; color: var(--cp-text-soft);
+  letter-spacing: 0.06em;
+}
+.phase .pico { font-size: 1.4rem; line-height: 1; }
+.phase .pname { font-size: 0.86rem; font-weight: 700; line-height: 1.18; }
+.phase .pwhen { font-size: 0.7rem; color: var(--cp-text-muted); margin-top: auto; }
+.phase .stagebar {
+  position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px;
+  border-radius: 3px 3px 0 0; opacity: 0.9;
+}
+.stage-pre .stagebar { background: var(--cp-warning); }
+.stage-deploy .stagebar { background: var(--cp-link); }
+.stage-post .stagebar { background: var(--cp-success); }
+
+/* stage track legend over the flow */
+.stage-track {
+  display: grid; grid-template-columns: 3fr 4fr 2fr; gap: 10px; margin-bottom: 10px;
+}
+.stage-seg {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 7px 10px; border-radius: 10px; display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--cp-border); color: var(--cp-text-muted); background: var(--cp-surface-soft);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.warn { background: var(--cp-warning); }
+.dot.link { background: var(--cp-link); }
+.dot.ok { background: var(--cp-success); }
+
+/* gate marker */
+.gate-row { display: flex; justify-content: center; margin: 14px 0 0; }
+.gate-chip {
+  display: inline-flex; align-items: center; gap: 9px; font-size: 0.8rem; font-weight: 700;
+  padding: 9px 16px; border-radius: 999px; background: var(--cp-highlight);
+  border: 1px dashed var(--cp-accent); color: var(--cp-accent);
+}
+
+/* ---------- Detail panel ---------- */
+.detail {
+  margin-top: 18px; background: var(--cp-surface); border: 1px solid var(--cp-border);
+  border-radius: 16px; padding: 22px 24px; box-shadow: var(--cp-shadow);
+}
+.detail-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 4px; }
+.detail-head .dico {
+  width: 48px; height: 48px; border-radius: 12px; flex: none; display: grid; place-items: center;
+  font-size: 1.5rem; background: var(--cp-accent-soft); border: 1px solid var(--cp-accent-soft);
+}
+.detail-head h3 { margin: 0; font-size: 1.22rem; }
+.detail-head .meta { font-size: 0.8rem; color: var(--cp-text-muted); margin-top: 2px; }
+.detail-lead { color: var(--cp-text); margin: 12px 0 18px; font-size: 1rem; }
+
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.cell {
+  background: var(--cp-bg-elevated); border: 1px solid var(--cp-border); border-radius: 12px;
+  padding: 14px 15px;
+}
+.cell h4 {
+  margin: 0 0 8px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.07em;
+  display: flex; align-items: center; gap: 7px;
+}
+.cell h4 .badge {
+  font-size: 0.62rem; padding: 2px 7px; border-radius: 999px; font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.badge.method { background: var(--cp-accent-soft); color: var(--cp-accent); }
+.badge.gate { background: var(--cp-highlight); color: var(--cp-accent); }
+.badge.roll { background: rgba(245,158,11,0.14); color: var(--cp-warning); }
+.badge.what { background: var(--cp-surface-soft); color: var(--cp-text-muted); }
+.cell ul { margin: 0; padding-left: 18px; }
+.cell li { margin: 4px 0; font-size: 0.9rem; }
+.cell li code {
+  background: var(--cp-surface-soft); padding: 1px 5px; border-radius: 5px; font-size: 0.82em;
+  border: 1px solid var(--cp-border);
+}
+.cell.full { grid-column: 1 / -1; }
+
+.docs-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.doc-link {
+  font-size: 0.8rem; text-decoration: none; color: var(--cp-link);
+  border: 1px solid var(--cp-border); border-radius: 8px; padding: 5px 10px; background: var(--cp-surface);
+}
+.doc-link:hover { border-color: var(--cp-link); }
+
+.navbtns { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+
+/* ---------- Method legend ---------- */
+.principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px; }
+.principle {
+  background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 12px;
+  padding: 14px 15px;
+}
+.principle .pi { font-size: 1.2rem; }
+.principle h5 { margin: 6px 0 5px; font-size: 0.92rem; }
+.principle p { margin: 0; font-size: 0.84rem; color: var(--cp-text-muted); }
+
+footer {
+  margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--cp-border);
+  font-size: 0.8rem; color: var(--cp-text-soft);
+}
+footer a { color: var(--cp-link); }
+
+@media (max-width: 900px) {
+  .flow { grid-template-columns: repeat(2, 1fr); }
+  .stage-track { display: none; }
+  .grid { grid-template-columns: 1fr; }
+  .principles { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">P</div>
+      <div>
+        <h1>Microsoft Purview — Deployment Framework</h1>
+        <div class="sub">SMB Best Practice Tool · Microsoft Purview Data Security baseline (license-aware: Business Premium and up)</div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" id="themeToggle" type="button" aria-label="Toggle light/dark theme">◐ Theme</button>
+    </div>
+  </div>
+
+  <section class="hero">
+    <h2>Deploy safe. Simulate. Promote on a gate.</h2>
+    <p class="goal">
+      The goal of this toolkit is to bring a Microsoft 365 tenant to Microsoft's recommended
+      <b>Data Security baseline</b> — sensitivity labels, DLP, retention and audit —
+      <b>without surprising a single end user</b>. <b>Business Premium is the baseline floor</b>,
+      but the toolkit is <b>license-aware</b>: it auto-detects the tenant's licensing and applies
+      the controls that licence actually supports. A BP tenant gets Exchange + SharePoint/OneDrive
+      DLP and the core baseline; on an <b>E5 / Microsoft Purview Suite</b> tenant extra controls
+      switch on automatically — <b>Endpoint DLP</b> (device copy / print / USB, in simulation) and
+      <b>AI governance (Copilot DLP)</b> — while higher-SKU extras like Premium Audit and retention
+      stay <b>opt-in</b>. It does that with one repeatable method: every tenant-wide control
+      is <b>piloted</b>, applied <b>idempotently</b>, run in <b>simulation first</b>, and only
+      switched to enforcement after a human passes a <b>Day-30 promotion gate</b>. Click any phase
+      below to see what happens, how the app does it, the safety gate, and the rollback path.
+    </p>
+    <div class="signature">
+      <span class="tag">Pilot before production</span>
+      <span class="tag">Zero-Trust connect</span>
+      <span class="tag">License-aware gating</span>
+      <span class="tag">Idempotent read-modify-write</span>
+      <span class="tag">DLP in simulation first</span>
+      <span class="tag">Human gate before enforce</span>
+      <span class="tag">Every step audited in a report</span>
+    </div>
+  </section>
+
+  <div class="section-label">The deployment journey — pre-deployment ➜ post-deployment</div>
+
+  <div class="stage-track" aria-hidden="true">
+    <div class="stage-seg"><span class="dot warn"></span> Pre-deployment · prepare</div>
+    <div class="stage-seg"><span class="dot link"></span> Deployment · the app run (safe + simulated)</div>
+    <div class="stage-seg"><span class="dot ok"></span> Post-deployment · promote &amp; operate</div>
+  </div>
+
+  <div class="flow" id="flow"><!-- phases injected --></div>
+
+  <div class="gate-row">
+    <span class="gate-chip">🚦 The signature control: DLP ships in <b>&nbsp;Simulation&nbsp;</b> mode and only enforces after the Day-30 gate</span>
+  </div>
+
+  <div class="detail" id="detail"><!-- detail injected --></div>
+
+  <div class="navbtns">
+    <button class="btn" id="prevBtn" type="button">← Previous phase</button>
+    <button class="btn primary" id="nextBtn" type="button">Next phase →</button>
+  </div>
+
+  <div class="section-label">Why this method — the five principles every phase obeys</div>
+  <div class="principles">
+    <div class="principle">
+      <div class="pi">♻️</div>
+      <h5>Idempotent by construction</h5>
+      <p>Every change is read-modify-write: read current state, preserve other tools' settings, merge our intent. Re-running never clobbers and never double-applies.</p>
+    </div>
+    <div class="principle">
+      <div class="pi">🧪</div>
+      <h5>Simulation before enforcement</h5>
+      <p>DLP policies are created in test/simulation mode. They observe and report matches for ~30 days with zero user impact before anyone flips them to enforce.</p>
+    </div>
+    <div class="principle">
+      <div class="pi">🔒</div>
+      <h5>Least-privilege, Zero-Trust auth</h5>
+      <p>Graph-first connect order, WAM broker, and the smallest consent scopes that satisfy the run. Read-only scopes for detection; write scopes only when a write feature is on.</p>
+    </div>
+    <div class="principle">
+      <div class="pi">🧾</div>
+      <h5>Every disposition is audited</h5>
+      <p>Ran, skipped or failed — each step writes to a persistent HTML + JSON report. Host output disappears; the report is the audit trail and the regression guard.</p>
+    </div>
+    <div class="principle">
+      <div class="pi">⚠️</div>
+      <h5>Irreversible = opt-in</h5>
+      <p>One-way operations (retention delete, co-authoring) are never default-on. The safe value ships by default; the operator must consciously pass a named switch.</p>
+    </div>
+    <div class="principle">
+      <div class="pi">🛟</div>
+      <h5>Pilot, then production</h5>
+      <p>The method assumes a test-tenant pilot first. Tenant-wide changes can take up to 24h to propagate, so nothing reaches production users unrehearsed.</p>
+    </div>
+  </div>
+
+  <footer>
+    Generated framework for the <b>SMB Best Practice Tool · Microsoft Purview</b> toolkit.
+    This is a delivery-method overview for Microsoft partners / MSP delivery leads — it is not the
+    script itself. Authoritative behaviour lives in
+    <code>Deploy-PurviewBestPractice.ps1</code> and the product docs.
+    Provided AS IS with no warranty.
+  </footer>
+
+</div>
+
+<script>
+// Doc links resolve to the live docs site so they work both when this file is
+// served from GitHub Pages AND when it's shared/opened standalone.
+const SITE = "https://amirjafarian.github.io/SMBBestPracticeTool/purview/";
+const PHASES = [
+  {
+    stage: "pre", num: "PHASE 0", ico: "🧭", name: "Prepare", when: "Before any change",
+    lead: "Understand scope, confirm prerequisites, and plan the customer change before touching the tenant. Nothing is deployed in this phase — it exists to make the rest predictable.",
+    what: [
+      "Read what the baseline does and what's deliberately out of scope.",
+      "Confirm licensing (Business Premium baseline; E5 / Purview Suite unlocks add-ons).",
+      "Line up admin roles and required PowerShell modules.",
+      "Plan T-7 end-user comms and review the retention-delete risk."
+    ],
+    method: [
+      "Host: <b>PowerShell 7+</b> (<code>pwsh.exe</code>) — the script hard-fails on 5.1.",
+      "PS 5.1 must still be present (SPO loads via <code>-UseWindowsPowerShell</code> bridge).",
+      "Modules auto-detected; <code>-AutoInstallModules</code> installs silently.",
+      "Change-Management Playbook drives the pre-deploy checklist."
+    ],
+    gate: [
+      "Pilot in a <b>test tenant</b> first — production is never the rehearsal.",
+      "Retention risk reviewed before <code>-ApplyRetention</code> is ever considered."
+    ],
+    roll: [
+      "No tenant changes made yet — nothing to roll back.",
+      "Decision recorded against the playbook so the plan is auditable."
+    ],
+    docs: [
+      { t: "Scenarios & Capabilities", u: "scenarios/" },
+      { t: "Change-Management Playbook", u: "change-management-playbook/" },
+      { t: "Retention Default — Risk Note", u: "retention-default-risk/" }
+    ]
+  },
+  {
+    stage: "deploy", num: "PHASE 1", ico: "🔐", name: "Connect", when: "Run start",
+    lead: "Establish least-privilege, Zero-Trust connections to every service the run needs, in an order that avoids known auth footguns.",
+    what: [
+      "Sign in to Exchange Online, Security &amp; Compliance (IPPS), SharePoint Online and Microsoft Graph.",
+      "Reuse one auth context across services where the SDK allows it.",
+      "Surface a startup guard entry recording the connection health."
+    ],
+    method: [
+      "<b>Graph-first</b> connect order so Graph's MSAL wins the AppDomain.",
+      "<b>WAM broker</b> turns repeat sign-ins into one-click confirmations.",
+      "SPO loaded via <code>-UseWindowsPowerShell</code> so its MSAL DLL stays out of PS 7.",
+      "Auto <code>-DisableWAM</code> fallback when an MSAL mismatch is detected."
+    ],
+    gate: [
+      "Least-privilege scopes only — <code>Organization.Read.All</code> for detection.",
+      "Write scope <code>Directory.ReadWrite.All</code> requested only when container labels run."
+    ],
+    roll: [
+      "Connect is a precondition, not a tenant change — nothing to undo.",
+      "Disconnect / close <code>pwsh</code> ends the session cleanly."
+    ],
+    docs: [ { t: "Connect &amp; prerequisites (README)", u: "" } ]
+  },
+  {
+    stage: "deploy", num: "PHASE 2", ico: "🔎", name: "Assess", when: "Before writes",
+    lead: "Detect the tenant's real licensing and decide which features are in scope — then optionally preview every change without committing it.",
+    what: [
+      "Read-only license auto-detect classifies the tenant (BP vs E5 / Purview Suite).",
+      "Confirm tenant identity to avoid configuring the wrong customer.",
+      "Gate optional features (Premium Audit, Endpoint DLP) by detected SKU."
+    ],
+    method: [
+      "<code>Organization.Read.All</code> reads <code>/subscribedSkus</code> and <code>/organization</code>.",
+      "<code>-WhatIf</code> previews the full run with zero writes.",
+      "<code>-BPOnly</code> hard-blocks any E5-only opt-in for strict BP engagements."
+    ],
+    gate: [
+      "Auto-detect skips features the tenant isn't licensed for — no silent over-reach.",
+      "Tenant-identity confirm guards against GDAP cross-tenant mistakes."
+    ],
+    roll: [
+      "Assessment is read-only — there is nothing to revert.",
+      "<code>-WhatIf</code> means you can dry-run the whole deploy first."
+    ],
+    docs: [ { t: "Scenarios — licensing matrix", u: "scenarios/" } ]
+  },
+  {
+    stage: "deploy", num: "PHASE 3", ico: "⚙️", name: "Configure", when: "Day 0",
+    lead: "Apply the baseline idempotently, scaled to the detected licence. DLP is created in SIMULATION mode here — it observes, it does not block. This is the heart of the safe-deploy method.",
+    what: [
+      "<b>Tenant settings</b>: Unified Audit Log (always on), SharePoint AIP integration, PDF labelling.",
+      "<b>Sensitivity labels</b>: Public / General / Confidential / Highly Confidential + sub-labels, encryption, container scope.",
+      "<b>DLP policies</b> — all created in <b>simulation</b>: Exchange and SharePoint+OneDrive (BP and up), plus <b>Endpoint DLP</b> (device copy / print / USB) on E5 / Purview Suite.",
+      "<b>Retention</b> (opt-in): 7-year keep-then-delete for Exchange mail.",
+      "<b>AI governance (Copilot DLP)</b>: auto <b>default-on</b> once license detection finds an E5 / Microsoft Purview Suite SKU (opt out with <code>-SkipAIControls</code> / <code>-BPOnly</code>)."
+    ],
+    method: [
+      "<b>License-aware</b>: BP gets Exchange + SPO/ODB DLP; on E5 / Purview Suite license detection auto-adds <b>Endpoint DLP</b> and <b>AI governance (Copilot DLP)</b>.",
+      "On BP, the Endpoint DLP policy is <b>soft-skipped</b> (warn + continue) so the BP-eligible policies still deploy; <code>-BPOnly</code> forces this.",
+      "<b>Premium Audit</b> (<code>-EnablePremiumAudit</code>), retention (<code>-ApplyRetention</code>) and label co-authoring are <b>opt-in</b> switches, not auto.",
+      "<b>Read-modify-write</b>: existing customer settings are preserved, never clobbered. Labels matched by <b>GUID</b>, not display name.",
+      "Bulk-read once; each task logs <code>ran / skipped / failed</code> to the report."
+    ],
+    gate: [
+      "DLP — including Endpoint — ships in <b>simulation / test mode</b> (<code>TestWithoutNotifications</code>): zero user impact on Day 0.",
+      "Retention &amp; Premium Audit are <b>opt-in</b> — never automatic.",
+      "E5-only workloads are <b>skipped</b> (not failed) on BP; <code>-BPOnly</code> hard-skips them even if the SKU is present.",
+      "Container / co-authoring one-way switches are opt-in, safe value default."
+    ],
+    roll: [
+      "Labels &amp; policies are created, not destructive — removable via portal/PowerShell.",
+      "Simulation DLP enforces nothing, so there is nothing for users to recover from.",
+      "<code>-AdoptExisting</code> brings prior objects under management without overwrite."
+    ],
+    docs: [
+      { t: "Scenarios — what each task does", u: "scenarios/" },
+      { t: "Configuration Reference — customize PurviewConfig.psd1", u: "configuration-reference/" },
+      { t: "Retention risk", u: "retention-default-risk/" }
+    ]
+  },
+  {
+    stage: "deploy", num: "PHASE 4", ico: "🧪", name: "Soak & Simulate", when: "Day 1–30",
+    lead: "Let the configuration settle and let DLP run in simulation. Policies observe real traffic and log what they WOULD have blocked — collecting the evidence the promotion decision needs.",
+    what: [
+      "Sensitivity labels and tenant settings propagate (can take up to 24h+).",
+      "DLP simulation records matches and would-be blocks without acting.",
+      "Partner monitors volume, hot spots and false positives across the window."
+    ],
+    method: [
+      "Day 1–5 monitoring cadence from the Change-Management Playbook.",
+      "The deployment report (HTML + JSON) is the baseline evidence record.",
+      "No enforcement is active — the tenant behaves exactly as before for users."
+    ],
+    gate: [
+      "Enforcement stays OFF for the entire soak — simulation only.",
+      "A noisy policy is tuned during soak, not after it has blocked real users."
+    ],
+    roll: [
+      "Simulation can be left running or removed with no user-visible effect.",
+      "Tuning happens against simulation data, before any enforcement risk."
+    ],
+    docs: [
+      { t: "Change-Management Playbook — Day 1–5", u: "change-management-playbook/" },
+      { t: "DLP Simulation Exit Runbook", u: "dlp-simulation-exit-runbook/" }
+    ]
+  },
+  {
+    stage: "post", num: "PHASE 5", ico: "🚦", name: "Promote", when: "Day ~30 gate",
+    lead: "The human decision point. Review 30 days of simulation evidence, tune false positives, and consciously promote DLP from simulation to enforcement — or decide it's not ready yet.",
+    what: [
+      "Review simulation matches and false-positive rate per policy.",
+      "Tune conditions / exceptions where simulation surfaced noise.",
+      "Promote: simulation ➜ test-with-notifications ➜ enforce."
+    ],
+    method: [
+      "The DLP Simulation Exit Runbook drives the promote-from-simulation conversation.",
+      "Promotion is a deliberate operator action — never automatic, never on Day 0.",
+      "Each promotion step is recorded so the enforcement date is auditable."
+    ],
+    gate: [
+      "<b>This is the gate.</b> Enforcement only begins when a human signs off.",
+      "If evidence is poor, the gate fails closed — stay in simulation and re-tune."
+    ],
+    roll: [
+      "Revert enforce ➜ simulation if production shows unexpected blocks.",
+      "Because policies were tuned on real evidence, surprises are minimised."
+    ],
+    docs: [
+      { t: "DLP Simulation Exit Runbook", u: "dlp-simulation-exit-runbook/" },
+      { t: "Change-Management Playbook — Day 30", u: "change-management-playbook/" }
+    ]
+  },
+  {
+    stage: "post", num: "PHASE 6", ico: "📣", name: "Adopt & Operate", when: "T+30 onward",
+    lead: "Land the change with end users and keep the tenant healthy. The deployment artifacts become the operating baseline and the audit trail.",
+    what: [
+      "Send the T+30 end-user adoption comms explaining what changed and why.",
+      "Hand over the HTML/JSON reports as the configuration baseline.",
+      "Re-run idempotently anytime to verify or extend the baseline."
+    ],
+    method: [
+      "End-User Adoption Guide ships ready-to-edit T-7 / T-0 / T+30 email templates.",
+      "Reports give the customer a durable record of every disposition.",
+      "Idempotency means a re-run reconciles drift without re-doing safe steps."
+    ],
+    gate: [
+      "Adoption comms precede the user-visible enforcement, not follow it.",
+      "Any future change re-enters this same simulate-then-promote method."
+    ],
+    roll: [
+      "Re-run with <code>-WhatIf</code> to confirm desired state before changes.",
+      "Reports pinpoint exactly what to adjust if a control needs walking back."
+    ],
+    docs: [
+      { t: "End-User Adoption Guide", u: "end-user-adoption-guide/" }
+    ]
+  }
+];
+
+const flowEl = document.getElementById("flow");
+const detailEl = document.getElementById("detail");
+let current = 0;
+
+function stageClass(s) {
+  return s === "pre" ? "stage-pre" : s === "post" ? "stage-post" : "stage-deploy";
+}
+
+function renderFlow() {
+  flowEl.innerHTML = "";
+  PHASES.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "phase " + stageClass(p.stage) + (i === current ? " active" : "");
+    b.setAttribute("aria-pressed", i === current ? "true" : "false");
+    b.innerHTML =
+      '<span class="pnum">' + p.num + '</span>' +
+      '<span class="pico">' + p.ico + '</span>' +
+      '<span class="pname">' + p.name + '</span>' +
+      '<span class="pwhen">' + p.when + '</span>' +
+      '<span class="stagebar"></span>';
+    b.addEventListener("click", () => { current = i; render(); });
+    flowEl.appendChild(b);
+  });
+}
+
+function list(items) {
+  return '<ul>' + items.map(x => '<li>' + x + '</li>').join('') + '</ul>';
+}
+
+function renderDetail() {
+  const p = PHASES[current];
+  const docs = p.docs && p.docs.length
+    ? '<div class="cell full"><h4><span class="badge what">Read more</span> Source docs for this phase</h4>' +
+      '<div class="docs-links">' +
+      p.docs.map(d => '<a class="doc-link" href="' + (/^https?:/.test(d.u) ? d.u : SITE + d.u) + '" target="_blank" rel="noopener">' + d.t + ' ↗</a>').join('') +
+      '</div></div>'
+    : '';
+  detailEl.innerHTML =
+    '<div class="detail-head">' +
+      '<div class="dico">' + p.ico + '</div>' +
+      '<div><h3>' + p.name + '</h3>' +
+      '<div class="meta">' + p.num + ' · ' + p.when + '</div></div>' +
+    '</div>' +
+    '<p class="detail-lead">' + p.lead + '</p>' +
+    '<div class="grid">' +
+      '<div class="cell"><h4><span class="badge what">What</span> What happens</h4>' + list(p.what) + '</div>' +
+      '<div class="cell"><h4><span class="badge method">Method</span> How the app does it</h4>' + list(p.method) + '</div>' +
+      '<div class="cell"><h4><span class="badge gate">Gate</span> Safety gate</h4>' + list(p.gate) + '</div>' +
+      '<div class="cell"><h4><span class="badge roll">Rollback</span> If you need to step back</h4>' + list(p.roll) + '</div>' +
+      docs +
+    '</div>';
+}
+
+function render() {
+  renderFlow();
+  renderDetail();
+  document.getElementById("prevBtn").disabled = current === 0;
+  document.getElementById("nextBtn").disabled = current === PHASES.length - 1;
+}
+
+document.getElementById("prevBtn").addEventListener("click", () => {
+  if (current > 0) { current--; render(); }
+});
+document.getElementById("nextBtn").addEventListener("click", () => {
+  if (current < PHASES.length - 1) { current++; render(); }
+});
+
+// Theme toggle
+document.getElementById("themeToggle").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", cur);
+  try { localStorage.setItem("cpTheme", cur); } catch (e) {}
+});
+
+render();
+</script>
+</body>
+</html>

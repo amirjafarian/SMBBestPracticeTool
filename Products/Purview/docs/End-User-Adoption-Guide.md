@@ -1,3 +1,11 @@
+---
+title: End-User Adoption Guide
+layout: default
+parent: Purview
+nav_order: 7
+permalink: /purview/end-user-adoption-guide/
+---
+
 # End-User Adoption Guide
 
 > **Audience.** Employees of an organisation where IT is rolling out the
@@ -9,7 +17,28 @@
 > partner-side playbook is in
 > [`Change-Management-Playbook.md`](Change-Management-Playbook.md).
 
+[Open the guide full-screen ↗]({{ '/Products/Purview/docs/End-User-Adoption-Guide.html' | relative_url }}){: .btn .btn-purple target="_blank" }
+[Download the standalone file ↗]({{ '/Products/Purview/docs/End-User-Adoption-Guide.html' | relative_url }}){: .btn target="_blank" download }
+
+> 💡 The styled guide below is a **single self-contained HTML file**
+> (`Products/Purview/docs/End-User-Adoption-Guide.html`). It needs no server,
+> so you can send it to staff on its own, host it on an intranet page, or open
+> it offline. A `.docx` version is in the same folder for editing.
+
+<iframe
+  src="{{ '/Products/Purview/docs/End-User-Adoption-Guide.html' | relative_url }}"
+  title="End-User Adoption Guide"
+  style="width:100%; height:1000px; border:1px solid #dedede; border-radius:12px;"
+  loading="lazy">
+</iframe>
+
 ---
+
+## 📋 Plain-text version (easy to copy-paste)
+{: .no_toc }
+
+The same guidance in Markdown — handy for lifting the email templates and
+pasting them into your own comms.
 
 ## 🟢 TL;DR — what's changing in one paragraph
 

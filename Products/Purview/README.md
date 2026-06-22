@@ -1,3 +1,11 @@
+---
+title: Purview
+layout: default
+nav_order: 2
+has_children: true
+permalink: /purview/
+---
+
 # Microsoft Purview Best Practice Deployment Toolkit
 
 PowerShell automation that applies Microsoft's recommended **Data Security
@@ -8,6 +16,20 @@ tenants to Purview.
 The configuration applied here is taken directly from the Microsoft "Data
 Security Best Practice Deployment" guide for Business Premium.
 
+> 🗺️ **Want the big picture first?** See the
+> [**visual Deployment Framework**](docs/Deployment-Framework.html) — an
+> interactive one-screen model of the whole method, from pre-deployment to
+> post-deployment, showing how every tenant-wide change is piloted, applied
+> idempotently, simulated, and only enforced after a Day-30 gate. Best viewed
+> on the [docs site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/deployment-framework/).
+>
+> 🧰 **On the support team / service desk?** See
+> [**What's Changing — Support Team Guide**](docs/What-This-Tool-Does.html) — a
+> visual, colour-coded summary of what changes in the tenant, what's on /
+> opt-in / auto-detected, and what does *not* change, so you're ready for
+> rollout support calls. Best viewed on the
+> [docs site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/whats-changing/).
+>
 > 📖 **New here?** Read [`docs/Scenarios.md`](docs/Scenarios.md) first —
 > it explains every scenario the script covers, what changes when the
 > customer's licensing changes, and what's deliberately out of scope.
@@ -48,7 +70,7 @@ Security Best Practice Deployment" guide for Business Premium.
 |---|---------------------|----------------------------------------------------------------------------------------------------------------------|
 | 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling                             |
 | 2 | **Sensitivity labels** | Creates `Public`, `General`, `Confidential` (parent + 3 sub-labels), `Highly Confidential` (parent + 3 sub-labels). Encryption: `Highly Confidential\All Employees` uses Co-Author rights, `Highly Confidential\Internal Exception` + `Confidential\Specific People` + `Highly Confidential\Specific People` use Reviewer / UserDefined; all rights scoped to your tenant only via `{TenantDomain}`. Labels ordered, then published with `General` as the email default. The 3 published labels (`General`, `Confidential\All Employees`, `Highly Confidential\All Employees`) carry container scope (`Site, UnifiedGroup`) so they appear in the Purview portal's Scope picker for Teams, Microsoft 365 Groups, and SharePoint sites — `-SkipContainerLabels` strips those bits without dropping the labels. |
-| 3 | **DLP policies**    | Two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive. Both block external sharing of content labelled `Confidential\AllEmployees`. Match condition uses the label **GUID**, not the display name. |
+| 3 | **DLP policies**    | On Business Premium, two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive, both blocking external sharing of content labelled `Confidential\AllEmployees`. On **E5 / Microsoft Purview Suite**, license detection adds a third **Endpoint DLP** policy (device copy / print / USB / network-share auditing). All are created in **simulation** by default. Match condition uses the label **GUID**, not the display name. |
 | 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
 ### Optional add-ons
@@ -79,7 +101,7 @@ baseline. Some optional features require a higher SKU:
 | Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Default on (BP includes Entra ID P1, the AAD-side requirement); opt out with `-SkipContainerLabels`. License auto-detect skips it automatically when no recognised BP/E5/Purview Suite SKU is found. |
 | Container scope on the 3 published labels (`Site`, `UnifiedGroup` on `General` / `Confidential\All Employees` / `Highly Confidential\All Employees`) | Business Premium (AAD P1+) | Default on; gated by the same `-SkipContainerLabels` switch. When stripped, the labels still ship with `File, Email` scope (no failure). Adoption uses UNION-not-replace so a customer-added scope is never lost. |
 | Premium Audit (1-year retention, `SearchQueryInitiated`)  | E5 / Audit (Premium) add-on           | Opt-in via `-EnablePremiumAudit`       |
-| Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
+| Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | **In the default config; auto-created in simulation** when license auto-detect finds an E5 / Purview Suite SKU. Soft-skipped on Business Premium and under `-BPOnly` (the Exchange + SPO/ODB policies still deploy). |
 | DLP for Defender for Cloud Apps / on-prem / Power BI      | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
 
 **Pass `-BPOnly`** to hard-block any E5-only opt-ins. The script refuses to
@@ -452,8 +474,12 @@ The most common customisations:
 
 * Change the default applied label (`LabelPolicy.DefaultLabel`)
 * Add SharePoint / OneDrive to retention scope (`Retention.Locations`)
-* Change retention from 2 → N years (`Retention.DurationDays`)
+* Change retention from the 7-year default to N years (`Retention.DurationDays`, in days — `2555` = 7 years)
 * Tighten encryption rights (`EncryptionRightsDefinitions`)
+
+> 📖 **Full key-by-key guide:** see the
+> [Configuration Reference](docs/Configuration-Reference.md) — every tunable in
+> `PurviewConfig.psd1`, its default, and how to change it safely.
 
 > **Don't change** the `ManagedByTag` after a deployment — it's how the
 > toolkit recognises objects it owns on subsequent runs.
