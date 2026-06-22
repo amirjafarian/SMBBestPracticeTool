@@ -88,7 +88,7 @@ customer before deploying:
 ## What "lost mail" looks like in practice
 
 Six weeks after a default deploy onto a tenant that already had mail
-older than 7 years, a partner's helpdesk gets a ticket like:
+older than 7 years, the helpdesk gets a ticket like:
 
 > "I'm trying to find the email from [client] from 2017 about [matter].
 > It's not in Outlook search, not in Deleted Items, not in Recoverable
@@ -175,7 +175,7 @@ is agreed:
 
 Per-vertical presets (law / accounting / healthcare / construction /
 generic) are a planned future enhancement — see the repo issues list.
-Until they ship, **the partner owns the duration decision** even though
+Until they ship, **whoever runs the deployment owns the duration decision** even though
 the default now aligns with the most common SMB floor. Document the
 chosen duration on the customer record before deploy, and revisit on
 every renewal.

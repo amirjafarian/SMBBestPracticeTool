@@ -14,7 +14,7 @@ when it runs — what's **on by default**, what's **opt-in**, what's
 **auto-detected from the licence**, and what's **destructive**. Colour-coded so
 it's scannable.
 
-**Who this is for:** the **partner / MSP support team (service desk)**. Read it
+**Who this is for:** the **support team / service desk**. Read it
 *before* a deployment so you know exactly what lands in the customer's tenant —
 and, just as importantly, **what does _not_ change** — so you're ready for any
 support call about the rollout (new labels in Office, "why can't I share this
@@ -49,7 +49,7 @@ file externally", the 30-day simulation window, Copilot behaviour, etc.).
 
 | | **This page** — What's Changing | [Scenarios & Capabilities](scenarios/) |
 |---|---|---|
-| **Audience** | Partner support team / service desk | Evaluators, reviewers, security leads |
+| **Audience** | Support team / service desk | Evaluators, reviewers, security leads |
 | **Angle** | What lands in the tenant · on / off / auto · **impact & no-impact** | Full scenario matrix · per-licence behaviour · **out-of-scope** |
 | **Format** | Visual, colour-coded, scan-in-2-minutes | Reference prose + tables |
 

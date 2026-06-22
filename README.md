@@ -3,8 +3,8 @@
 PowerShell automation that configures Microsoft 365 tenants against
 Microsoft's recommended best-practice baselines for Small / Medium customers.
 
-Built for Microsoft partners who need a repeatable, idempotent way to onboard
-customer tenants.
+Built for repeatable, idempotent configuration of Microsoft 365 tenants — by
+partners/MSPs and in-house IT teams alike.
 
 ## Products
 

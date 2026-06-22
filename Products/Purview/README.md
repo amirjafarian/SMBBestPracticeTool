@@ -9,9 +9,9 @@ permalink: /purview/
 # Microsoft Purview Best Practice Deployment Toolkit
 
 PowerShell automation that applies Microsoft's recommended **Data Security
-baseline** to a Microsoft 365 **Business Premium** tenant. Built for
-Microsoft partners who need a repeatable, idempotent way to onboard customer
-tenants to Purview.
+baseline** to a Microsoft 365 **Business Premium** tenant. Built for anyone
+who needs a repeatable, idempotent way to bring a tenant to the Purview
+baseline — partners/MSPs and in-house IT teams alike.
 
 The configuration applied here is taken directly from the Microsoft "Data
 Security Best Practice Deployment" guide for Business Premium.
@@ -438,11 +438,11 @@ auto-derivation fails (e.g. multi-geo or unusual domain configurations):
     -SharePointAdminUrl https://contoso-admin.sharepoint.com
 ```
 
-### Partner-delegated (GDAP) scenario
+### Delegated admin (GDAP) scenario
 
 ```powershell
 .\Deploy-PurviewBestPractice.ps1 `
-    -TenantAdminUpn partneradmin@fabrikam.onmicrosoft.com `
+    -TenantAdminUpn delegatedadmin@fabrikam.onmicrosoft.com `
     -DelegatedOrganization contoso.onmicrosoft.com
 ```
 

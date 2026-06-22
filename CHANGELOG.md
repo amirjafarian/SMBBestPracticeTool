@@ -8,7 +8,7 @@ permalink: /changelog/
 # Changelog
 {: .no_toc }
 
-All notable, **partner-facing** changes to the SMB Best Practice Tool are
+All notable, **operator-facing** changes to the SMB Best Practice Tool are
 recorded here — new features, changed defaults, fixes, and anything that
 affects how you run the toolkit or what lands in a customer tenant.
 
@@ -26,7 +26,7 @@ This is an operations toolkit, so SemVer (`MAJOR.MINOR.PATCH`) is read as:
 
 | Bump | Means | Example |
 |---|---|---|
-| **MAJOR** | A change to behaviour, a default, or a switch that **requires partner action** or changes what happens in a tenant. | A default flips from off to on. |
+| **MAJOR** | A change to behaviour, a default, or a switch that **requires action from whoever runs the toolkit** or changes what happens in a tenant. | A default flips from off to on. |
 | **MINOR** | A **new** feature, switch, or product — backward compatible. | A new optional `-Switch`. |
 | **PATCH** | A **bug fix** with no behaviour change for correct usage. | A connect/auth reliability fix. |
 
@@ -34,7 +34,7 @@ Each entry is grouped under **Added / Changed / Deprecated / Removed / Fixed /
 Security**, and tagged by area (e.g. `[Purview]`, `[Site]`). Changes that have
 landed but not yet been tagged in a release appear under **Unreleased**.
 
-> 🛠 **Maintainer note.** This is the *partner-facing* counterpart to the
+> 🛠 **Maintainer note.** This is the *operator-facing* counterpart to the
 > internal `Skills/` decision logs (which capture the *why* in detail). Keep
 > entries short and operator-focused: "what changes when I run this." When you
 > cut a release, rename `Unreleased` to `vX.Y.Z — YYYY-MM-DD` and create the
