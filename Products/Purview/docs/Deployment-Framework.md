@@ -2,7 +2,7 @@
 title: Deployment Framework (Visual)
 layout: default
 parent: Purview
-nav_order: 6
+nav_order: 7
 permalink: /purview/deployment-framework/
 ---
 

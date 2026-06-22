@@ -2,11 +2,16 @@
 title: Scenarios & Capabilities
 layout: default
 parent: Purview
-nav_order: 1
+nav_order: 2
 permalink: /purview/scenarios/
 ---
 
 # What this toolkit does — Scenarios & Capabilities
+
+> 🧰 **On the partner support team / service desk?** For the fast, visual
+> "what's changing & what's the impact" view, start with
+> [**What's Changing — Support Team Guide**](whats-changing/). This page is
+> the deeper technical reference.
 
 > **Audience.** Anyone evaluating, running, or reviewing the SMBTool Purview
 > deployment script — partners, IT admins, security leads, and reviewers.

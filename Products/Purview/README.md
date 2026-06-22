@@ -23,6 +23,13 @@ Security Best Practice Deployment" guide for Business Premium.
 > idempotently, simulated, and only enforced after a Day-30 gate. Best viewed
 > on the [docs site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/deployment-framework/).
 >
+> 🧰 **On the support team / service desk?** See
+> [**What's Changing — Support Team Guide**](docs/What-This-Tool-Does.html) — a
+> visual, colour-coded summary of what changes in the tenant, what's on /
+> opt-in / auto-detected, and what does *not* change, so you're ready for
+> rollout support calls. Best viewed on the
+> [docs site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/whats-changing/).
+>
 > 📖 **New here?** Read [`docs/Scenarios.md`](docs/Scenarios.md) first —
 > it explains every scenario the script covers, what changes when the
 > customer's licensing changes, and what's deliberately out of scope.

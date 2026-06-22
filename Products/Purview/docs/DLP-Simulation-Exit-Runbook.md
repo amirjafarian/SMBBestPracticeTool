@@ -2,7 +2,7 @@
 title: DLP Simulation Exit Runbook
 layout: default
 parent: Purview
-nav_order: 4
+nav_order: 5
 permalink: /purview/dlp-simulation-exit-runbook/
 ---
 
