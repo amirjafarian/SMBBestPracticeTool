@@ -276,10 +276,11 @@ footer a { color: var(--cp-link); }
       <b>Data Security baseline</b> — sensitivity labels, DLP, retention and audit —
       <b>without surprising a single end user</b>. <b>Business Premium is the baseline floor</b>,
       but the toolkit is <b>license-aware</b>: it auto-detects the tenant's licensing and applies
-      the controls that licence actually supports. On an <b>E5 / Microsoft Purview Suite</b> tenant
-      that means <b>AI governance (Copilot DLP) is automatically default-on</b>; higher-SKU extras
-      like Premium Audit stay <b>opt-in</b> (<code>-EnablePremiumAudit</code>) and Endpoint DLP is
-      out of scope by default. It does that with one repeatable method: every tenant-wide control
+      the controls that licence actually supports. A BP tenant gets Exchange + SharePoint/OneDrive
+      DLP and the core baseline; on an <b>E5 / Microsoft Purview Suite</b> tenant extra controls
+      switch on automatically — <b>Endpoint DLP</b> (device copy / print / USB, in simulation) and
+      <b>AI governance (Copilot DLP)</b> — while higher-SKU extras like Premium Audit and retention
+      stay <b>opt-in</b>. It does that with one repeatable method: every tenant-wide control
       is <b>piloted</b>, applied <b>idempotently</b>, run in <b>simulation first</b>, and only
       switched to enforcement after a human passes a <b>Day-30 promotion gate</b>. Click any phase
       below to see what happens, how the app does it, the safety gate, and the rollback path.
@@ -447,21 +448,21 @@ const PHASES = [
     what: [
       "<b>Tenant settings</b>: Unified Audit Log (always on), SharePoint AIP integration, PDF labelling.",
       "<b>Sensitivity labels</b>: Public / General / Confidential / Highly Confidential + sub-labels, encryption, container scope.",
-      "<b>DLP policies</b>: Exchange and SharePoint+OneDrive — created in <b>simulation</b>.",
+      "<b>DLP policies</b> — all created in <b>simulation</b>: Exchange and SharePoint+OneDrive (BP and up), plus <b>Endpoint DLP</b> (device copy / print / USB) on E5 / Purview Suite.",
       "<b>Retention</b> (opt-in): 7-year keep-then-delete for Exchange mail.",
       "<b>AI governance (Copilot DLP)</b>: auto <b>default-on</b> once license detection finds an E5 / Microsoft Purview Suite SKU (opt out with <code>-SkipAIControls</code> / <code>-BPOnly</code>)."
     ],
     method: [
-      "<b>License-aware</b>: BP gets the BP set; the only control auto-added by license detection on E5 / Purview Suite is <b>AI governance (Copilot DLP)</b>.",
-      "<b>Premium Audit</b> (1-yr, <code>SearchQueryInitiated</code>) is <b>opt-in</b>, not auto — needs <code>-EnablePremiumAudit</code> + <code>-PremiumAuditMailbox</code>.",
-      "<b>Endpoint DLP</b> and other E5-only DLP workloads are <b>not configured by default</b>.",
-      "<b>Read-modify-write</b>: existing customer settings are preserved, never clobbered.",
-      "Labels matched by <b>GUID</b>, not display name; bulk-read once; each task logs <code>ran / skipped / failed</code>."
+      "<b>License-aware</b>: BP gets Exchange + SPO/ODB DLP; on E5 / Purview Suite license detection auto-adds <b>Endpoint DLP</b> and <b>AI governance (Copilot DLP)</b>.",
+      "On BP, the Endpoint DLP policy is <b>soft-skipped</b> (warn + continue) so the BP-eligible policies still deploy; <code>-BPOnly</code> forces this.",
+      "<b>Premium Audit</b> (<code>-EnablePremiumAudit</code>), retention (<code>-ApplyRetention</code>) and label co-authoring are <b>opt-in</b> switches, not auto.",
+      "<b>Read-modify-write</b>: existing customer settings are preserved, never clobbered. Labels matched by <b>GUID</b>, not display name.",
+      "Bulk-read once; each task logs <code>ran / skipped / failed</code> to the report."
     ],
     gate: [
-      "DLP ships in <b>simulation / test mode</b> — zero user impact on Day 0.",
-      "Retention &amp; Premium Audit are <b>opt-in</b> (<code>-ApplyRetention</code> / <code>-EnablePremiumAudit</code>) — never automatic.",
-      "E5-only opt-ins are <b>skipped</b> (not failed) on BP; <code>-BPOnly</code> hard-blocks them even if the SKU is present.",
+      "DLP — including Endpoint — ships in <b>simulation / test mode</b> (<code>TestWithoutNotifications</code>): zero user impact on Day 0.",
+      "Retention &amp; Premium Audit are <b>opt-in</b> — never automatic.",
+      "E5-only workloads are <b>skipped</b> (not failed) on BP; <code>-BPOnly</code> hard-skips them even if the SKU is present.",
       "Container / co-authoring one-way switches are opt-in, safe value default."
     ],
     roll: [
