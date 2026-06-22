@@ -261,7 +261,7 @@ footer a { color: var(--cp-link); }
       <div class="logo">P</div>
       <div>
         <h1>Microsoft Purview — Deployment Framework</h1>
-        <div class="sub">SMB Best Practice Tool · Data Security baseline for Business Premium</div>
+        <div class="sub">SMB Best Practice Tool · Microsoft Purview Data Security baseline (license-aware: Business Premium and up)</div>
       </div>
     </div>
     <div class="controls">
@@ -272,13 +272,17 @@ footer a { color: var(--cp-link); }
   <section class="hero">
     <h2>Deploy safe. Simulate. Promote on a gate.</h2>
     <p class="goal">
-      The goal of this toolkit is to bring a Microsoft 365 <b>Business Premium</b> tenant to
-      Microsoft's recommended <b>Data Security baseline</b> — sensitivity labels, DLP, retention and
-      audit — <b>without surprising a single end user</b>. It does that with one repeatable method:
-      every tenant-wide control is <b>piloted</b>, applied <b>idempotently</b>, run in
-      <b>simulation first</b>, and only switched to enforcement after a human passes a
-      <b>Day-30 promotion gate</b>. Click any phase below to see what happens, how the app does it,
-      the safety gate, and the rollback path.
+      The goal of this toolkit is to bring a Microsoft 365 tenant to Microsoft's recommended
+      <b>Data Security baseline</b> — sensitivity labels, DLP, retention and audit —
+      <b>without surprising a single end user</b>. <b>Business Premium is the baseline floor</b>,
+      but the toolkit is <b>license-aware</b>: it auto-detects the tenant's licensing and applies
+      the controls that licence actually supports, so an <b>E5 / Microsoft Purview Suite</b> tenant
+      additionally gets the advanced controls it's entitled to (e.g. Premium Audit, Endpoint DLP,
+      AI governance) while a Business Premium tenant gets the BP-appropriate set. It does that with
+      one repeatable method: every tenant-wide control is <b>piloted</b>, applied
+      <b>idempotently</b>, run in <b>simulation first</b>, and only switched to enforcement after a
+      human passes a <b>Day-30 promotion gate</b>. Click any phase below to see what happens, how
+      the app does it, the safety gate, and the rollback path.
     </p>
     <div class="signature">
       <span class="tag">Pilot before production</span>
@@ -439,14 +443,16 @@ const PHASES = [
   },
   {
     stage: "deploy", num: "PHASE 3", ico: "⚙️", name: "Configure", when: "Day 0",
-    lead: "Apply the baseline idempotently. DLP is created in SIMULATION mode here — it observes, it does not block. This is the heart of the safe-deploy method.",
+    lead: "Apply the baseline idempotently, scaled to the detected licence. DLP is created in SIMULATION mode here — it observes, it does not block. This is the heart of the safe-deploy method.",
     what: [
       "<b>Tenant settings</b>: Unified Audit Log, SharePoint AIP integration, PDF labelling.",
       "<b>Sensitivity labels</b>: Public / General / Confidential / Highly Confidential + sub-labels, encryption, container scope.",
       "<b>DLP policies</b>: Exchange and SharePoint+OneDrive — created in <b>simulation</b>.",
-      "<b>Retention</b> (opt-in): 7-year keep-then-delete for Exchange mail."
+      "<b>Retention</b> (opt-in): 7-year keep-then-delete for Exchange mail.",
+      "<b>License-detected add-ons</b> on E5 / Purview Suite: AI governance (Copilot DLP), Premium Audit, Endpoint DLP — applied only when the tenant is entitled."
     ],
     method: [
+      "<b>License-aware</b>: BP gets the BP set; E5 / Purview Suite additionally gets the advanced controls it's licensed for.",
       "<b>Read-modify-write</b>: existing customer settings are preserved, never clobbered.",
       "Labels matched by <b>GUID</b>, not display name, so DLP binds to the right label.",
       "Bulk-read collections once; look up in memory — never per-item in a loop.",
@@ -455,6 +461,7 @@ const PHASES = [
     gate: [
       "DLP ships in <b>simulation / test mode</b> — zero user impact on Day 0.",
       "Retention is <b>opt-in</b> via <code>-ApplyRetention</code> — never automatic.",
+      "E5-only controls are <b>skipped</b> (not failed) on BP; <code>-BPOnly</code> hard-blocks them even if the SKU is present.",
       "Container / co-authoring one-way switches are opt-in, safe value default."
     ],
     roll: [
