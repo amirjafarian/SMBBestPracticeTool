@@ -23,6 +23,11 @@ way to onboard customer tenants.
 | Product | Toolkit | Status |
 |---|---|---|
 | [Microsoft Purview](purview/) — Data Security baseline for Business Premium | `Products/Purview/` | ✅ Available |
+
+> 🗺️ **See the method at a glance:** the
+> [**Purview Deployment Framework**](purview/deployment-framework/) is an
+> interactive visual model of how the toolkit deploys — pre-deployment to
+> post-deployment, with the simulate-then-promote safety gate front and centre.
 | Microsoft Entra | `Products/Entra/` | 🔜 Planned |
 | Microsoft Intune | `Products/Intune/` | 🔜 Planned |
 | Microsoft Defender | `Products/Defender/` | 🔜 Planned |

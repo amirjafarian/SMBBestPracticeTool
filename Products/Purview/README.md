@@ -16,6 +16,13 @@ tenants to Purview.
 The configuration applied here is taken directly from the Microsoft "Data
 Security Best Practice Deployment" guide for Business Premium.
 
+> 🗺️ **Want the big picture first?** See the
+> [**visual Deployment Framework**](docs/Deployment-Framework.html) — an
+> interactive one-screen model of the whole method, from pre-deployment to
+> post-deployment, showing how every tenant-wide change is piloted, applied
+> idempotently, simulated, and only enforced after a Day-30 gate. Best viewed
+> on the [docs site](https://amirjafarian.github.io/SMBBestPracticeTool/purview/deployment-framework/).
+>
 > 📖 **New here?** Read [`docs/Scenarios.md`](docs/Scenarios.md) first —
 > it explains every scenario the script covers, what changes when the
 > customer's licensing changes, and what's deliberately out of scope.
