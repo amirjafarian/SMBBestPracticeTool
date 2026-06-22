@@ -21,12 +21,13 @@ enforcement after a human passes a Day-30 gate.*
 
 > 🎫 **License-aware scope.** Business Premium is the **baseline floor**, not the
 > ceiling. The toolkit auto-detects the tenant's licensing and applies the
-> controls that licence supports — so an **E5 / Microsoft Purview Suite** tenant
-> additionally receives the advanced controls it's entitled to (e.g. AI
-> governance / Copilot DLP, Premium Audit, Endpoint DLP), while a Business
-> Premium tenant gets the BP-appropriate set. E5-only controls are *skipped*
-> (not failed) on BP, and `-BPOnly` hard-blocks them even when the SKU is
-> present.
+> controls that licence supports. On an **E5 / Microsoft Purview Suite** tenant
+> the control that's automatically added is **AI governance (Copilot DLP)**
+> (default-on; opt out with `-SkipAIControls` / `-BPOnly`). Higher-SKU extras
+> like **Premium Audit** stay **opt-in** (`-EnablePremiumAudit` +
+> `-PremiumAuditMailbox`), and **Endpoint DLP** / other E5-only DLP workloads
+> are **not configured by default**. E5-only opt-ins are *skipped* (not failed)
+> on BP, and `-BPOnly` hard-blocks them even when the SKU is present.
 
 [Open the framework full-screen ↗]({{ '/Products/Purview/docs/Deployment-Framework.html' | relative_url }}){: .btn .btn-purple target="_blank" }
 [Download the standalone file ↗]({{ '/Products/Purview/docs/Deployment-Framework.html' | relative_url }}){: .btn target="_blank" download }
