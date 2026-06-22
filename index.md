@@ -36,6 +36,9 @@ Pick a product from the sidebar (or the table above) for its full
 documentation: what it does, prerequisites, how to run, scenarios it
 covers, change-management playbook, and end-user adoption material.
 
+> 🆕 **What's new?** See the [**Changelog**](changelog/) for new features,
+> changed defaults, and fixes across releases.
+
 ---
 
 ## Common prerequisites (all toolkits)
