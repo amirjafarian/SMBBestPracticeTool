@@ -1,3 +1,11 @@
+---
+title: End-User Adoption Guide
+layout: default
+parent: Purview
+nav_order: 5
+permalink: /purview/end-user-adoption-guide/
+---
+
 # End-User Adoption Guide
 
 > **Audience.** Employees of an organisation where IT is rolling out the

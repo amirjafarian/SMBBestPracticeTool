@@ -17,3 +17,13 @@ Products/**/AdHoc/*
 # regenerate the module from scratch. Treat the folder as personal/shareable
 # — copy or zip it out of the repo to share, never commit it.
 Skills/
+
+# Personal design / brainstorming notes — captured before an idea is mature
+# enough to become an issue or a spec. Local-only.
+Design-Notes/
+
+# Jekyll local-preview output and lock file. The docs site is built by
+# GitHub Pages from the repo source; nothing here belongs in git.
+_site/
+.jekyll-cache/
+Gemfile.lock

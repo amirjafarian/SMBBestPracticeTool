@@ -1,3 +1,11 @@
+---
+title: Retention Default — Risk Note
+layout: default
+parent: Purview
+nav_order: 3
+permalink: /purview/retention-default-risk/
+---
+
 # Retention Default — Risk Note
 
 > **Read this before passing `-ApplyRetention`.** Retention is opt-in

@@ -1,3 +1,11 @@
+---
+title: DLP Simulation Exit Runbook
+layout: default
+parent: Purview
+nav_order: 4
+permalink: /purview/dlp-simulation-exit-runbook/
+---
+
 # DLP Simulation Exit Runbook
 
 > **Audience.** The partner consultant running the Phase 3 (day-30)

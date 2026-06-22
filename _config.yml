@@ -1,0 +1,107 @@
+title: SMB Best Practice Tool
+description: >-
+  PowerShell automation that configures Microsoft 365 tenants against
+  Microsoft's recommended best-practice baselines for Small / Medium customers.
+url: "https://amirjafarian.github.io"
+baseurl: "/SMBBestPracticeTool"
+
+# Build from the repository root so existing docs in Products/<Product>/docs/
+# remain the single source of truth. No duplication, no build script.
+# GitHub Pages must be configured to "Deploy from a branch" -> root.
+
+remote_theme: just-the-docs/just-the-docs@v0.10.0
+color_scheme: light
+
+# just-the-docs nav / search behaviour
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+heading_anchors: true
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# Footer
+footer_content: >-
+  &copy; Microsoft partner sample. Provided AS IS with no warranty.
+  See <a href="https://github.com/amirjafarian/SMBBestPracticeTool">repository</a>
+  for the LICENSE and disclaimer.
+
+aux_links:
+  "GitHub":
+    - "https://github.com/amirjafarian/SMBBestPracticeTool"
+
+# What Jekyll should turn into pages. Anything not in include/ and not in the
+# default Jekyll-tracked locations is ignored. Anything in exclude wins.
+include:
+  - Products
+exclude:
+  # Runtime PowerShell — never part of the docs site.
+  - "**/*.ps1"
+  - "**/*.psd1"
+  - "**/*.psm1"
+  # Per-run deployment reports (also gitignored, but defensive).
+  - "**/Deploy-*-Report-*.html"
+  - "**/Deploy-*-Report-*.json"
+  # Standalone HTML adoption guide (it's a downloadable artifact, not a page).
+  - "Products/Purview/docs/End-User-Adoption-Guide.html"
+  - "Products/Purview/docs/End-User-Adoption-Guide.docx"
+  - "Products/Purview/docs/What-This-Tool-Does.html"
+  # Code / data / sample directories — not docs.
+  - "Products/Purview/Modules"
+  - "Products/Purview/Config"
+  - "Products/Purview/Examples"
+  - "Products/Purview/AdHoc"
+  # Repo housekeeping.
+  - LICENSE
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - node_modules
+  - .vscode
+  - Feedback
+  - Skills
+  - Design-Notes
+  - README.md          # Site landing page lives in index.md; root README is GitHub-only.
+
+# Apply layout + nav defaults to existing markdown files so we don't have to
+# touch most of them. Per-page front matter (title, nav_order, parent) is
+# added in-place to the files that need to appear in the sidebar.
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+  - jekyll-default-layout
+  - jekyll-titles-from-headings
+
+# Rewrite relative `*.md` links inside the existing docs to the rendered
+# HTML URLs at build time, so we don't have to edit any cross-references
+# inside the source markdown.
+relative_links:
+  enabled: true
+  collections: true
+titles_from_headings:
+  enabled: true
+  strip_title: false
+  collections: true
+
+# Markdown / kramdown — match GitHub's renderer as closely as possible.
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+# Don't try to publish drafts or future-dated posts.
+future: false
+show_drafts: false

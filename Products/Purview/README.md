@@ -1,3 +1,11 @@
+---
+title: Purview
+layout: default
+nav_order: 2
+has_children: true
+permalink: /purview/
+---
+
 # Microsoft Purview Best Practice Deployment Toolkit
 
 PowerShell automation that applies Microsoft's recommended **Data Security

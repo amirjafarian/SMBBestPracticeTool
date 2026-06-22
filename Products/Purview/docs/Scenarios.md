@@ -1,3 +1,11 @@
+---
+title: Scenarios & Capabilities
+layout: default
+parent: Purview
+nav_order: 1
+permalink: /purview/scenarios/
+---
+
 # What this toolkit does — Scenarios & Capabilities
 
 > **Audience.** Anyone evaluating, running, or reviewing the SMBTool Purview

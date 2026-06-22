@@ -1,3 +1,11 @@
+---
+title: Change-Management Playbook
+layout: default
+parent: Purview
+nav_order: 2
+permalink: /purview/change-management-playbook/
+---
+
 # Change-Management Playbook (Partner Edition)
 
 > **Audience.** The partner consultant or MSP delivery lead responsible for
