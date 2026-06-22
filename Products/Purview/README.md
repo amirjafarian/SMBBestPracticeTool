@@ -474,8 +474,12 @@ The most common customisations:
 
 * Change the default applied label (`LabelPolicy.DefaultLabel`)
 * Add SharePoint / OneDrive to retention scope (`Retention.Locations`)
-* Change retention from 2 → N years (`Retention.DurationDays`)
+* Change retention from the 7-year default to N years (`Retention.DurationDays`, in days — `2555` = 7 years)
 * Tighten encryption rights (`EncryptionRightsDefinitions`)
+
+> 📖 **Full key-by-key guide:** see the
+> [Configuration Reference](docs/Configuration-Reference.md) — every tunable in
+> `PurviewConfig.psd1`, its default, and how to change it safely.
 
 > **Don't change** the `ManagedByTag` after a deployment — it's how the
 > toolkit recognises objects it owns on subsequent runs.

@@ -2,7 +2,7 @@
 title: End-User Adoption Guide
 layout: default
 parent: Purview
-nav_order: 6
+nav_order: 7
 permalink: /purview/end-user-adoption-guide/
 ---
 

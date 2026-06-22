@@ -2,7 +2,7 @@
 title: Retention Default — Risk Note
 layout: default
 parent: Purview
-nav_order: 4
+nav_order: 5
 permalink: /purview/retention-default-risk/
 ---
 

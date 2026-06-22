@@ -2,7 +2,7 @@
 title: Deployment Framework (Visual)
 layout: default
 parent: Purview
-nav_order: 7
+nav_order: 8
 permalink: /purview/deployment-framework/
 ---
 
@@ -80,6 +80,7 @@ The framework is a map, not the territory. Each phase links to the authoritative
 docs:
 
 - [Scenarios &amp; Capabilities](scenarios/) — what every task does and what's out of scope.
+- [Configuration Reference](configuration-reference/) — every `PurviewConfig.psd1` knob and how to change it.
 - [Change-Management Playbook](change-management-playbook/) — the day-by-day delivery runbook.
 - [DLP Simulation Exit Runbook](dlp-simulation-exit-runbook/) — the Day-30 promotion gate.
 - [Retention Default — Risk Note](retention-default-risk/) — before you pass `-ApplyRetention`.

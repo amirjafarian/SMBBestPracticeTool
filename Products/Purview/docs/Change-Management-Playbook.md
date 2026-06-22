@@ -2,7 +2,7 @@
 title: Change-Management Playbook
 layout: default
 parent: Purview
-nav_order: 3
+nav_order: 4
 permalink: /purview/change-management-playbook/
 ---
 
