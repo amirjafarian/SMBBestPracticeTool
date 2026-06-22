@@ -6,9 +6,9 @@ nav_order: 4
 permalink: /purview/change-management-playbook/
 ---
 
-# Change-Management Playbook (Partner Edition)
+# Change-Management Playbook (Delivery Edition)
 
-> **Audience.** The partner consultant or MSP delivery lead responsible for
+> **Audience.** The deployment lead — a partner/MSP consultant or in-house IT — responsible for
 > rolling the SMBTool Purview baseline into a customer tenant. This is the
 > *non-technical* counterpart to the script — it covers the customer
 > conversation, comms, and the day-30 promote-from-simulation gate.
@@ -56,13 +56,13 @@ visually above.
 
 | # | Action | Owner | Output |
 |---|--------|-------|--------|
-| 1 | **Confirm tenant SKU** (Business Premium vs E5 / Purview Suite) | Partner | Decides whether `-BPOnly` is required. AI governance is default-on for E5 / Purview Suite tenants (covers both paid Microsoft 365 Copilot and free Copilot Chat) and auto-skipped on Business Premium |
-| 2 | **Confirm vertical and any regulatory framework** (law, accounting, healthcare, financial advisor, construction, real estate) | Partner + customer | Decides whether to enable retention at all (`-ApplyRetention` is opt-in) and, if enabled, what duration. The **default 7-year mail deletion** aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but may still be wrong for some verticals — see [Retention-Default-Risk.md](Retention-Default-Risk.md) |
-| 3 | **Inventory current Purview state** in the tenant — existing labels, DLP policies, retention policies | Partner | If any exist, decide between `-AdoptExisting` (toolkit takes over) or rename / archive first |
-| 4 | **Identify B2B guest exposure** — does the customer routinely invite accountants, lawyers, MSPs as guests? | Partner + customer | If yes, the `AuthenticatedUsers` encryption scope is **not** "internal-only" — see [Known sharp edges](#known-sharp-edges) |
-| 5 | **Pick a pilot mailbox / pilot site** for retention and DLP simulation review | Partner + customer | Names and UPNs go in the pre-deploy doc |
-| 6 | **Schedule the deploy window** and the day-30 review meeting in the same calendar invite | Partner | Both dates booked before the deploy |
-| 7 | **Draft user comms** (see [Comms templates](#comms-templates)) | Partner | Sent the day before the deploy |
+| 1 | **Confirm tenant SKU** (Business Premium vs E5 / Purview Suite) | Deploy team | Decides whether `-BPOnly` is required. AI governance is default-on for E5 / Purview Suite tenants (covers both paid Microsoft 365 Copilot and free Copilot Chat) and auto-skipped on Business Premium |
+| 2 | **Confirm vertical and any regulatory framework** (law, accounting, healthcare, financial advisor, construction, real estate) | Deploy + business | Decides whether to enable retention at all (`-ApplyRetention` is opt-in) and, if enabled, what duration. The **default 7-year mail deletion** aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC) but may still be wrong for some verticals — see [Retention-Default-Risk.md](Retention-Default-Risk.md) |
+| 3 | **Inventory current Purview state** in the tenant — existing labels, DLP policies, retention policies | Deploy team | If any exist, decide between `-AdoptExisting` (toolkit takes over) or rename / archive first |
+| 4 | **Identify B2B guest exposure** — does the customer routinely invite accountants, lawyers, MSPs as guests? | Deploy + business | If yes, the `AuthenticatedUsers` encryption scope is **not** "internal-only" — see [Known sharp edges](#known-sharp-edges) |
+| 5 | **Pick a pilot mailbox / pilot site** for retention and DLP simulation review | Deploy + business | Names and UPNs go in the pre-deploy doc |
+| 6 | **Schedule the deploy window** and the day-30 review meeting in the same calendar invite | Deploy team | Both dates booked before the deploy |
+| 7 | **Draft user comms** (see [Comms templates](#comms-templates)) | Deploy team | Sent the day before the deploy |
 
 ### Decisions to lock before you run the script
 

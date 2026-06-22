@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Change-Management Playbook — Purview deployment timeline</title>
-<meta name="description" content="Partner delivery timeline for the Microsoft Purview baseline: pre-deploy (T-7), day-of (T-0), day 1-5 soak, and the day-30 promote-from-simulation gate.">
+<meta name="description" content="Delivery timeline for the Microsoft Purview baseline: pre-deploy (T-7), day-of (T-0), day 1-5 soak, and the day-30 promote-from-simulation gate.">
 <style>
   :root{
     --brand:#0f6cbd;
@@ -122,19 +122,19 @@
 <div class="wrap">
 
 <header class="page">
-  <div class="eyebrow">Microsoft Purview Best Practice Toolkit · Partner Edition</div>
+  <div class="eyebrow">Microsoft Purview Best Practice Toolkit · Delivery Edition</div>
   <h1>Change-Management Playbook</h1>
   <p class="lede">The script handles the engineering. <b>This playbook is what makes it safe in
     production.</b> Several defaults have customer-visible consequences the moment they take effect —
     silent labelling on every new document, 7-year mail deletion, DLP blocking external sends.
     Follow this timeline so the deploy lands as a planned change, not a help-desk ticket generator.</p>
-  <div class="aud"><b>Audience:</b> the partner consultant / MSP delivery lead. For the end-user-facing
+  <div class="aud"><b>Audience:</b> the deployment lead (a partner/MSP consultant or in-house IT). For the end-user-facing
     companion (what employees see + ready-to-send comms), see the <b>End-User Adoption Guide</b>.</div>
 </header>
 
 <div class="legend" aria-label="Owner legend">
-  <span class="pill partner"><span class="dot"></span>Partner action</span>
-  <span class="pill customer"><span class="dot"></span>Needs customer input</span>
+  <span class="pill partner"><span class="dot"></span>Deploy-team action</span>
+  <span class="pill customer"><span class="dot"></span>Needs business input</span>
   <span class="pill gate"><span class="dot"></span>Decision gate</span>
 </div>
 
@@ -148,13 +148,13 @@
       <h2>Pre-deploy — plan the change</h2>
       <p class="sub">Nothing touches the tenant yet. This phase exists to make the rest predictable.</p>
       <ul class="acts">
-        <li><b>Confirm tenant SKU</b> — Business Premium vs E5 / Purview Suite. Decides whether <code>-BPOnly</code> is needed; AI governance is default-on for E5 / Purview Suite.<span class="who">Partner</span></li>
-        <li><b>Confirm vertical &amp; regulatory framework</b> — decides whether to enable retention and at what duration (7-year delete is opt-in).<span class="who cust">Partner + Customer</span></li>
-        <li><b>Inventory current Purview state</b> — existing labels / DLP / retention. Decide <code>-AdoptExisting</code> vs rename/archive.<span class="who">Partner</span></li>
-        <li><b>Identify B2B guest exposure</b> — routine external guests change the encryption scope picture.<span class="who cust">Partner + Customer</span></li>
-        <li><b>Pick a pilot mailbox / site</b> for retention &amp; DLP simulation review.<span class="who cust">Partner + Customer</span></li>
-        <li><b>Schedule the deploy window AND the day-30 review</b> in the same calendar invite.<span class="who">Partner</span></li>
-        <li><b>Draft user comms</b> — sent the day before deploy.<span class="who">Partner</span></li>
+        <li><b>Confirm tenant SKU</b> — Business Premium vs E5 / Purview Suite. Decides whether <code>-BPOnly</code> is needed; AI governance is default-on for E5 / Purview Suite.<span class="who">Deploy team</span></li>
+        <li><b>Confirm vertical &amp; regulatory framework</b> — decides whether to enable retention and at what duration (7-year delete is opt-in).<span class="who cust">Deploy + business</span></li>
+        <li><b>Inventory current Purview state</b> — existing labels / DLP / retention. Decide <code>-AdoptExisting</code> vs rename/archive.<span class="who">Deploy team</span></li>
+        <li><b>Identify B2B guest exposure</b> — routine external guests change the encryption scope picture.<span class="who cust">Deploy + business</span></li>
+        <li><b>Pick a pilot mailbox / site</b> for retention &amp; DLP simulation review.<span class="who cust">Deploy + business</span></li>
+        <li><b>Schedule the deploy window AND the day-30 review</b> in the same calendar invite.<span class="who">Deploy team</span></li>
+        <li><b>Draft user comms</b> — sent the day before deploy.<span class="who">Deploy team</span></li>
       </ul>
       <div class="panel">
         <h3>Decisions to lock before you run the script</h3>
@@ -294,8 +294,8 @@
 </div>
 
 <footer>
-  Change-Management Playbook (Partner Edition) for the <b>SMB Best Practice Tool · Microsoft Purview</b>
-  toolkit. A delivery-method guide for partners / MSP delivery leads — authoritative behaviour lives in
+  Change-Management Playbook (Delivery Edition) for the <b>SMB Best Practice Tool · Microsoft Purview</b>
+  toolkit. A delivery-method guide for whoever runs the toolkit (partners/MSPs or in-house IT) — authoritative behaviour lives in
   <code>Deploy-PurviewBestPractice.ps1</code> and <code>PurviewConfig.psd1</code>. Provided AS IS with no warranty.
 </footer>
 

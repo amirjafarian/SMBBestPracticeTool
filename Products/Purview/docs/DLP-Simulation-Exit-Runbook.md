@@ -8,7 +8,7 @@ permalink: /purview/dlp-simulation-exit-runbook/
 
 # DLP Simulation Exit Runbook
 
-> **Audience.** The partner consultant running the Phase 3 (day-30)
+> **Audience.** Whoever runs the Phase 3 (day-30)
 > promote-from-simulation conversation with the customer. Pairs with
 > [Change-Management-Playbook.md](Change-Management-Playbook.md).
 
@@ -18,7 +18,7 @@ the right default — nothing breaks on day one, telemetry accumulates,
 and the customer sees what *would* have been blocked before it actually
 blocks anything.
 
-The risk is what happens at day 30: most partners either
+The risk is what happens at day 30: most teams either
 
 1. **Sit there forever** because nobody knows how to read the telemetry
    (security theatre — the policies never actually enforce), or
@@ -41,7 +41,7 @@ on" event.
 ## Step 1 — Pull the "what would have leaked" report from Activity Explorer
 
 This is the single most useful artifact simulation produces, and the
-single most under-used feature of Purview. Most partners never open it.
+single most under-used feature of Purview. Most teams never open it.
 
 ### Where it lives
 
@@ -61,7 +61,7 @@ what *would* have happened (block / warn / audit).
 | Pattern | Interpretation | Action |
 |---|---|---|
 | **Zero hits in 30 days** | Either the label isn't being applied (check label policy publish), or the customer genuinely doesn't share Confidential content externally | Investigate before promoting — a policy with no telemetry is a policy you can't validate |
-| **A handful of hits, all from the same 1–2 users** | Likely legitimate business communication (e.g. the partner liaison emailing a quote to a known client) | Talk to those users *before* promoting; you may need an exception (allow-list domain) or business-process change |
+| **A handful of hits, all from the same 1–2 users** | Likely legitimate business communication (e.g. a sales rep emailing a quote to a known client) | Talk to those users *before* promoting; you may need an exception (allow-list domain) or business-process change |
 | **Steady stream of hits across many users** | The label is being over-applied — likely `Confidential\AllEmployees` is the default for documents and people are emailing routine docs out | Tighten label defaults OR refine the DLP rule conditions OR accept that promoting will generate user friction |
 | **Hits concentrated on one workload (e.g. all SPO, no EXO)** | The other workload's label adoption is lower than expected | Investigate user-side label availability (`Get-Label`, check published policy) before promoting either workload |
 

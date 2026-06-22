@@ -11,10 +11,10 @@ permalink: /purview/end-user-adoption-guide/
 > **Audience.** Employees of an organisation where IT is rolling out the
 > SMBTool Microsoft Purview baseline. **No technical background required.**
 >
-> **For IT / partners:** the script handles the engineering. This document
+> **For IT / delivery teams:** the script handles the engineering. This document
 > is what you give your users **before** the rollout so the helpdesk
 > doesn't get flooded. A reusable comms kit lives at the bottom. The
-> partner-side playbook is in
+> deployment-side playbook is in
 > [`Change-Management-Playbook.md`](Change-Management-Playbook.md).
 
 [Open the guide full-screen ↗]({{ '/Products/Purview/docs/End-User-Adoption-Guide.html' | relative_url }}){: .btn .btn-purple target="_blank" }
@@ -241,7 +241,7 @@ anything regulated — use **Confidential** or higher.
 > intranet, or whatever channel reaches your users. These are the
 > short-form versions — the
 > [Change-Management-Playbook](Change-Management-Playbook.md) has the
-> partner-detail equivalents.
+> full delivery-detail equivalents.
 
 ### Template A — 7 days before rollout
 

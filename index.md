@@ -10,8 +10,8 @@ permalink: /
 
 PowerShell automation that configures Microsoft 365 tenants against
 Microsoft's recommended best-practice baselines for **Small / Medium**
-customers. Built for Microsoft partners who need a repeatable, idempotent
-way to onboard customer tenants.
+customers. Built for repeatable, idempotent configuration of Microsoft 365
+tenants — by partners/MSPs and in-house IT teams alike.
 
 > ⚠️ **Always pilot in a test tenant before applying to production.** Many
 > changes are tenant-wide and can take up to 24 hours to fully propagate.

@@ -14,7 +14,7 @@ Purview Data Security baseline — from **pre-deployment** preparation, through 
 **safe + simulated** deployment run, to **post-deployment** promotion and
 operation.
 
-It exists so that anyone — a partner delivery lead, a reviewer, or a customer
+It exists so that anyone — a deployment lead, a reviewer, or a customer
 stakeholder — can understand the **method** and the **goal** in one screen,
 without reading the scripts: *deploy safe, simulate, and only promote to
 enforcement after a human passes a Day-30 gate.*

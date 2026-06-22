@@ -8,13 +8,13 @@ permalink: /purview/scenarios/
 
 # What this toolkit does — Scenarios & Capabilities
 
-> 🧰 **On the partner support team / service desk?** For the fast, visual
+> 🧰 **On the support team / service desk?** For the fast, visual
 > "what's changing & what's the impact" view, start with
 > [**What's Changing — Support Team Guide**](whats-changing/). This page is
 > the deeper technical reference.
 
 > **Audience.** Anyone evaluating, running, or reviewing the SMBTool Purview
-> deployment script — partners, IT admins, security leads, and reviewers.
+> deployment script — IT admins, security leads, deployment consultants, and reviewers.
 > No PowerShell expertise required to read this page; the technical
 > details live behind expandable sections.
 
@@ -323,7 +323,7 @@ Re-run the script with no `-BPOnly` flag. On the same config:
    `DlpStartInSimulation = $true`. Pass `-SkipAIControls` if the
    customer has a specific reason to defer this.
 4. **Premium audit** stays off until you opt in with
-   `-EnablePremiumAudit -PremiumAuditMailbox …` — partners shouldn't
+   `-EnablePremiumAudit -PremiumAuditMailbox …` — you shouldn't
    automatically expand audit scope without a conversation.
 
 Re-runs are **idempotent** — labels, DLP, retention objects already in
@@ -370,7 +370,7 @@ For the long-form Microsoft Purview guide, see
 | **`ManagedByTag`** | Every object the toolkit creates is stamped `[Managed by SMBTool Purview Toolkit]` — re-runs detect it and update in place. |
 | **`-AdoptExisting`** | Required to update objects with the same name that the toolkit didn't create. Prevents accidental overwrite. |
 | **Preflight summary + `y/N` prompt** | Master script prints what it's about to do and waits for confirmation. Skip with `-NonInteractive`. |
-| **`-BPOnly`** | Hard-block E5-only features so a partner can't accidentally enable Endpoint DLP / container labels / premium audit on a Business Premium customer. |
+| **`-BPOnly`** | Hard-block E5-only features so you can't accidentally enable Endpoint DLP / container labels / premium audit on a Business Premium tenant. |
 | **PowerShell 7 gate** | Refuses to run on PS 5.1 (silent EXOv3 / Graph SDK failures otherwise). |
 | **Cleanup script** | [`Tests/Invoke-PurviewCleanup.ps1`](../../../Tests/Invoke-PurviewCleanup.ps1) removes every object stamped with `ManagedByTag`. |
 
