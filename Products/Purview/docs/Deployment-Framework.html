@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Purview Deployment Framework — Simulate-Then-Promote</title>
 <script>
-  // Clawpilot theme detection — runs first, before any other JS.
+  // Theme detection — runs first, before any other JS.
   (() => {
     const param = new URLSearchParams(window.location.search).get("scoutTheme");
     const stored = (() => { try { return localStorage.getItem("cpTheme"); } catch (e) { return null; } })();
@@ -18,55 +18,55 @@
 <style>
 :root {
   color-scheme: light;
-  --cp-bg: #f7f4ef;
-  --cp-bg-elevated: #fcfbf8;
+  --cp-bg: #f7f9fc;
+  --cp-bg-elevated: #ffffff;
   --cp-surface: #ffffff;
-  --cp-surface-soft: #f5f5f5;
-  --cp-border: #dedede;
-  --cp-border-strong: #919191;
-  --cp-text: #242424;
-  --cp-text-muted: #5c5c5c;
-  --cp-text-soft: #6f6f6f;
-  --cp-accent: #b11f4b;
-  --cp-accent-hover: #9a1a41;
-  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-surface-soft: #eef3f8;
+  --cp-border: #dfe5ec;
+  --cp-border-strong: #b9c4d0;
+  --cp-text: #1b1b1b;
+  --cp-text-muted: #5f6b7a;
+  --cp-text-soft: #6f7d8c;
+  --cp-accent: #0f6cbd;
+  --cp-accent-hover: #0c4f8a;
+  --cp-accent-soft: rgba(15, 108, 189, 0.08);
   --cp-accent-fg: #ffffff;
-  --cp-success: #16a34a;
-  --cp-danger: #dc2626;
-  --cp-warning: #f59e0b;
-  --cp-link: #0078d4;
-  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-success: #107c10;
+  --cp-danger: #a4262c;
+  --cp-warning: #b86e00;
+  --cp-link: #0f6cbd;
+  --cp-shadow: 0 18px 48px rgba(15, 39, 71, 0.12);
   --cp-overlay: rgba(255, 255, 255, 0.8);
   --cp-panel: rgba(255, 255, 255, 0.86);
   --cp-panel-strong: rgba(255, 255, 255, 0.96);
   --cp-sheen: rgba(255, 255, 255, 0.55);
-  --cp-highlight: rgba(177, 31, 75, 0.12);
+  --cp-highlight: rgba(15, 108, 189, 0.12);
 }
 html[data-theme="dark"] {
   color-scheme: dark;
-  --cp-bg: #3d3b3a;
-  --cp-bg-elevated: #343231;
-  --cp-surface: #292929;
-  --cp-surface-soft: #2e2e2e;
-  --cp-border: #474747;
-  --cp-border-strong: #5f5f5f;
-  --cp-text: #dedede;
-  --cp-text-muted: #919191;
-  --cp-text-soft: #b0b0b0;
-  --cp-accent: #fd8ea1;
-  --cp-accent-hover: #fb7b91;
-  --cp-accent-soft: rgba(253, 142, 161, 0.14);
-  --cp-accent-fg: #1a1a1a;
+  --cp-bg: #0e1a29;
+  --cp-bg-elevated: #13243a;
+  --cp-surface: #16283f;
+  --cp-surface-soft: #1d3148;
+  --cp-border: #2b405a;
+  --cp-border-strong: #3e5878;
+  --cp-text: #e6edf5;
+  --cp-text-muted: #9fb1c6;
+  --cp-text-soft: #b6c5d8;
+  --cp-accent: #4da6ff;
+  --cp-accent-hover: #6cb6ff;
+  --cp-accent-soft: rgba(77, 166, 255, 0.16);
+  --cp-accent-fg: #0a1422;
   --cp-success: #4ade80;
   --cp-danger: #f87171;
   --cp-warning: #fbbf24;
-  --cp-link: #4da6ff;
-  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
-  --cp-overlay: rgba(41, 41, 41, 0.88);
-  --cp-panel: rgba(41, 41, 41, 0.72);
-  --cp-panel-strong: rgba(41, 41, 41, 0.96);
+  --cp-link: #6cb6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --cp-overlay: rgba(14, 26, 41, 0.88);
+  --cp-panel: rgba(14, 26, 41, 0.72);
+  --cp-panel-strong: rgba(14, 26, 41, 0.96);
   --cp-sheen: rgba(255, 255, 255, 0.04);
-  --cp-highlight: rgba(253, 142, 161, 0.12);
+  --cp-highlight: rgba(77, 166, 255, 0.14);
 }
 
 * { box-sizing: border-box; }

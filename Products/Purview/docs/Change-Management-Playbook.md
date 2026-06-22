@@ -27,7 +27,30 @@ generator.
 Use this as a checklist. Skip nothing on the first deployment for a
 customer; you can shorten subsequent ones with experience.
 
+[Open the timeline full-screen ↗]({{ '/Products/Purview/docs/Change-Management-Playbook.html' | relative_url }}){: .btn .btn-purple target="_blank" }
+[Download the standalone file ↗]({{ '/Products/Purview/docs/Change-Management-Playbook.html' | relative_url }}){: .btn target="_blank" download }
+
+> 💡 The visual timeline below is a **single self-contained HTML file**
+> (`Products/Purview/docs/Change-Management-Playbook.html`). It needs no server,
+> so you can share it with the delivery team on its own or open it offline. The
+> **full text** of the playbook — including every checklist row and the "known
+> sharp edges" detail — is kept below the timeline.
+
+<iframe
+  src="{{ '/Products/Purview/docs/Change-Management-Playbook.html' | relative_url }}"
+  title="Change-Management Playbook — visual timeline"
+  style="width:100%; height:1150px; border:1px solid #dedede; border-radius:12px;"
+  loading="lazy">
+</iframe>
+
 ---
+
+## 📋 Full playbook (text version)
+{: .no_toc }
+
+The complete checklist in Markdown — handy for copying rows into a delivery
+tracker, and the authoritative detail for the "known sharp edges" summarised
+visually above.
 
 ## Phase 0 — Pre-deploy (T-7 days)
 
