@@ -613,6 +613,39 @@ function Resolve-ConfiguredDefaultLabel {
     return Get-LabelByName -Name $DefaultName -DisplayName $display -Scope 'TopLevel'
 }
 
+# True when a live label object is a modern-scheme "Label Group" — a
+# non-assignable, non-publishable container. The signal is the `IsLabelGroup`
+# property on the plain Get-Label object (NO -ReturnModernLabelScheme switch):
+#   * Modern scheme: a parent that has sub-labels reports IsLabelGroup = True
+#     and CANNOT be published directly (New-LabelPolicy throws
+#     "Label group(s) '<id>' can not be published"); only its sub-labels are
+#     published and the group is auto-included by the service.
+#   * Classic scheme: a parent reports IsParent = True but IsLabelGroup = False
+#     and IS independently publishable — so this check leaves classic tenants
+#     untouched (no regression).
+# Returns $false for placeholder objects (WhatIf) and older IPPS modules that
+# don't surface the property, i.e. defaults to the legacy "publishable" path.
+function Test-IsLabelGroup {
+    param($LabelObject)
+    if (-not $LabelObject) { return $false }
+    $prop = $LabelObject.PSObject.Properties['IsLabelGroup']
+    return [bool]($prop -and $prop.Value -eq $true)
+}
+
+# A Label Group cannot serve as a default applied label. Given a live Label
+# Group object, return the child label to use as the default instead: prefer
+# 'Anyone (unrestricted)' (the least-sensitive Microsoft-default child, e.g.
+# General\Anyone (unrestricted)), otherwise the lowest-priority (least
+# sensitive) child. Returns $null when the group has no children.
+function Resolve-LabelGroupDefaultChild {
+    param([Parameter(Mandatory)] $GroupLabel)
+    $children = @($script:allLabels | Where-Object { $_.ParentId -and $GroupLabel.Guid -and ($_.ParentId -eq $GroupLabel.Guid) })
+    if ($children.Count -eq 0) { return $null }
+    $preferred = $children | Where-Object { $_.DisplayName -eq 'Anyone (unrestricted)' } | Select-Object -First 1
+    if ($preferred) { return $preferred }
+    return ($children | Sort-Object { [int]$_.Priority } | Select-Object -First 1)
+}
+
 # Read a single advanced-setting key (e.g. 'color') off a live Get-Label
 # object. IPPS surfaces these as a `Settings` collection whose ToString()
 # renders each entry as `[key, value]` (e.g. `[color, #13A10E]`). Parsing
@@ -1207,6 +1240,57 @@ function New-OrUpdate-Label {
                     Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' -Target $LabelDef.DisplayName -Status 'Skipped' -Detail "Label already exists (Id: $existingGuid). Re-run with -AdoptExisting to overwrite."
                     return $found
                 }
+            } elseif ($msg -match 'LocalizedDisplayNameConflictException' -and
+                      $msg -match "conflict with label '([0-9a-f-]{36}[^']*)'") {
+                # Recoverable case: New-Label was blocked because an existing
+                # label (often a Microsoft built-in) already uses a conflicting
+                # LOCALIZED display name under the same parent — e.g. configured
+                # 'Specific People' vs a built-in 'Specified People' whose en-US
+                # localized name is 'Specific People'. Get-LabelByName missed it
+                # (different primary DisplayName, GUID internal Name), so adopt
+                # the conflicting label by GUID instead of failing the whole run.
+                $existingGuid = $Matches[1]
+                $found = Get-Label -Identity $existingGuid -ErrorAction SilentlyContinue
+
+                # Validate hierarchy scope before adopting: refuse a
+                # top-level/sub-label mismatch, and for a configured sub-label
+                # refuse adoption of a live label under a DIFFERENT parent
+                # (would mis-map the label and break DLP/priority).
+                if ($found) {
+                    $callerWantsTopLevel = -not $ParentId
+                    $foundIsSubLabel     = [bool] $found.ParentId
+                    if (($callerWantsTopLevel -eq $foundIsSubLabel) -or
+                        ($ParentId -and $found.ParentId -and ($found.ParentId -ne $ParentId))) {
+                        $detail = "Localized-display-name conflict for '$($LabelDef.DisplayName)' resolved to live label (Id: $existingGuid) in a DIFFERENT hierarchy scope than configured (configured parent Id: '$ParentId'; live parent Id: '$($found.ParentId)'). Refusing to adopt to avoid mis-mapping. Rename the configured label, or rename/remove the conflicting live label in Purview Admin, then re-run."
+                        Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' `
+                            -Target $LabelDef.DisplayName -Status 'Failed' -Detail $detail
+                        Write-Warning "    $detail"
+                        return $null
+                    }
+                }
+                if (-not $found) {
+                    $found = [pscustomobject]@{
+                        Name        = $existingGuid
+                        DisplayName = $LabelDef.DisplayName
+                        Guid        = [guid]$existingGuid
+                        Priority    = -1
+                        ParentId    = $ParentId
+                        Comment     = ''
+                    }
+                }
+                $existing  = $found
+                $idForOps  = $existingGuid
+                $matchedBy = 'DisplayName'
+                $script:allLabels += $found
+
+                # Adopt as-is (reference by GUID). We deliberately do NOT update
+                # / rename the conflicting label even with -AdoptExisting: that
+                # would mutate a Microsoft built-in label and could re-trigger
+                # the localized-name conflict. The label is still fully usable by
+                # DLP (path resolution) and publishing (resolved Name).
+                Write-Host "    ~ Label '$($LabelDef.DisplayName)' conflicts on a localized display name with existing label '$($found.DisplayName)' (Id: $existingGuid). Adopting it as-is (not renamed)." -ForegroundColor Yellow
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' -Target $LabelDef.DisplayName -Status 'Adopted' -Detail "Localized-display-name conflict with label (Id: $existingGuid); adopted existing label as-is by GUID (not renamed)."
+                return $found
             } elseif ($msg -match 'ComplianceRuleAlreadyExistsInScenarioException' -or
                       $msg -match "compliance rule with name '[^']+' already exists in scenario") {
                 # Safety net: the retention-tag pre-flight didn't catch this
@@ -2055,6 +2139,34 @@ if ($policyCfg.DefaultLabelForEmail) {
     }
 }
 
+# A modern-scheme Label Group cannot be a default applied label (DefaultLabelId
+# / OutlookDefaultLabel must point at an assignable label). If a resolved
+# default or email-default is a Label Group, substitute its appropriate child
+# (prefer 'Anyone (unrestricted)') and force-publish that child so it is a valid
+# default. On classic tenants / flat labels this is a no-op (Test-IsLabelGroup
+# is False), so behaviour there is unchanged.
+$forcePublishNames = @()
+if ($defaultLabelObj -and (Test-IsLabelGroup $defaultLabelObj)) {
+    $child = Resolve-LabelGroupDefaultChild -GroupLabel $defaultLabelObj
+    if (-not $child) {
+        throw "Default label '$($policyCfg.DefaultLabel)' is a Label Group with no child to act as the default applied label. Set LabelPolicy.DefaultLabel to a sub-label."
+    }
+    Write-Host "    Document default '$($policyCfg.DefaultLabel)' is a Label Group; using its child '$($child.DisplayName)' as the default applied label." -ForegroundColor DarkYellow
+    $defaultLabelObj   = $child
+    $forcePublishNames += $child.Name
+}
+if ($emailDefaultLabelObj -and (Test-IsLabelGroup $emailDefaultLabelObj)) {
+    $child = Resolve-LabelGroupDefaultChild -GroupLabel $emailDefaultLabelObj
+    if ($child) {
+        Write-Host "    Email default '$($policyCfg.DefaultLabelForEmail)' is a Label Group; using its child '$($child.DisplayName)' as the Outlook default." -ForegroundColor DarkYellow
+        $emailDefaultLabelObj = $child
+        $forcePublishNames   += $child.Name
+    } else {
+        Write-Warning "    Email default '$($policyCfg.DefaultLabelForEmail)' is a Label Group with no child to use; omitting the Outlook-specific default."
+        $emailDefaultLabelObj = $null
+    }
+}
+
 # Build the published-labels filter set (if configured). When sub-labels are
 # listed, their parents are auto-included so the Purview hierarchy stays
 # valid (Purview rejects publishing a sub-label without its parent).
@@ -2079,7 +2191,14 @@ foreach ($lbl in $Config.Labels) {
     $includeParent = (-not $publishFilter) -or $publishFilter.Contains($lbl.Name)
     if ($includeParent) {
         if ($resolved) {
-            $allLabelNames += $resolved.Name
+            if (Test-IsLabelGroup $resolved) {
+                # Modern-scheme Label Group: publishing the parent directly fails
+                # ("Label group(s) '<id>' can not be published"). Skip it — the
+                # service auto-includes the group when a sub-label is published.
+                Write-Host "    Skipping parent '$($lbl.DisplayName)' from the publish set: it is a modern Label Group (auto-included via its sub-labels)." -ForegroundColor DarkGray
+            } else {
+                $allLabelNames += $resolved.Name
+            }
         } elseif ($WhatIfPreference) {
             $allLabelNames += $lbl.Name
         }
@@ -2098,6 +2217,13 @@ foreach ($lbl in $Config.Labels) {
             }
         }
     }
+}
+
+# Force-publish any child substituted in for a Label-Group default/email-default
+# above (e.g. General\Anyone (unrestricted)) so the default points at a label
+# that is actually in the policy.
+foreach ($fn in $forcePublishNames) {
+    if ($fn -and ($allLabelNames -notcontains $fn)) { $allLabelNames += $fn }
 }
 
 $advanced = @{
@@ -2139,12 +2265,21 @@ if (-not $existingPolicy) {
     $labelsToRemove = @()
     $labelsToAdd    = @()
     if ($existingPolicy.Labels) {
+        # Internal Names of all live Label Groups. When a sub-label is published,
+        # the service auto-adds its parent group to the stored policy (e.g.
+        # 'ConfidentialGroup'). We must never try to remove those — they are
+        # auto-managed — or every re-run would churn. We also never ADD a group
+        # (the publish builder above already excludes groups from $allLabelNames).
+        $groupNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($l in $allLabels) {
+            if ((Test-IsLabelGroup $l) -and $l.Name) { [void] $groupNames.Add([string]$l.Name) }
+        }
         $targetSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($n in $allLabelNames) { if ($n) { [void] $targetSet.Add($n) } }
         $existingSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($n in @($existingPolicy.Labels)) {
             if ($n) { [void] $existingSet.Add($n) }
-            if ($n -and -not $targetSet.Contains($n)) { $labelsToRemove += $n }
+            if ($n -and -not $targetSet.Contains($n) -and -not $groupNames.Contains($n)) { $labelsToRemove += $n }
         }
         foreach ($n in $allLabelNames) {
             if ($n -and -not $existingSet.Contains($n)) { $labelsToAdd += $n }
