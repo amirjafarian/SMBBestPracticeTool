@@ -48,6 +48,37 @@ _Nothing yet — new changes land here before the next tagged release._
 
 ---
 
+## [1.1.0] - 2026-06-27
+
+### Added
+
+- **[Purview] Modern label-scheme publishing.** On tenants migrated to the
+  modern sensitivity-label scheme, the toolkit now detects label **groups** (a
+  parent that has sub-labels becomes a non-publishable container) and publishes
+  only their sub-labels — the service auto-includes the parent group. It also
+  substitutes a group used as the document or email default with the
+  appropriate child (e.g. the Outlook default falls back from `General` to
+  `General\Anyone (unrestricted)`), and excludes auto-managed group entries
+  from the label-policy diff so re-runs stay idempotent. **Classic-scheme
+  tenants are unchanged.** Previously, deploying to a modern-scheme tenant that
+  already had the Microsoft built-in labels failed to publish with
+  `Label group(s) ... can not be published`.
+
+### Fixed
+
+- **[Purview] No longer aborts on a localized display-name collision.** When a
+  configured sub-label's display name matches an existing label's *localized*
+  name under the same parent (e.g. `Specific People` vs the built-in
+  `Specified People`), the toolkit now adopts the existing label instead of
+  failing `New-Label` — which previously cascaded into a hard
+  `Sensitivity label ... not found` stop in the DLP step.
+- **[Purview] Policy default label resolves when it is an adopted sub-label.**
+  Fixes `Default label 'AllEmployees' was not found after creation` on tenants
+  where the default sub-label was adopted from a pre-existing built-in label
+  (its live internal name is a GUID, not the configured name).
+
+---
+
 ## [1.0.0] - 2026-06-22
 
 **Initial versioned release.** This establishes version tracking; `1.0.0` is a
@@ -89,5 +120,6 @@ own version above.
 ---
 
 <!-- Link references — update the compare URLs as releases are tagged. -->
-[Unreleased]: https://github.com/amirjafarian/SMBBestPracticeTool/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/amirjafarian/SMBBestPracticeTool/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/amirjafarian/SMBBestPracticeTool/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/amirjafarian/SMBBestPracticeTool/releases/tag/v1.0.0
