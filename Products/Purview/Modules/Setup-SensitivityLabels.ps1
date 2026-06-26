@@ -570,6 +570,49 @@ function Get-LabelByName {
     return $null
 }
 
+# Resolve a configured default-label Name (LabelPolicy.DefaultLabel /
+# DefaultLabelForEmail) to its LIVE Purview label object. This MUST be
+# parent-aware: when the default is a sub-label that was ADOPTED from a
+# pre-existing label (e.g. a Microsoft-default 'All Employees' sub-label on a
+# tenant that already had the default sensitivity labels), the live label's
+# internal Name is a GUID, not the configured Name. A bare Name/DisplayName
+# lookup at the default 'Any' scope then fails: the Name match misses (GUID),
+# and the DisplayName fallback in 'Any' scope only considers TOP-LEVEL labels,
+# so a sub-label default is never found -> "Default label '<x>' was not found
+# after creation." We therefore resolve the parent first and match the
+# sub-label within the parent's scope, exactly as the published-labels
+# collection loop in Pass 4 does.
+function Resolve-ConfiguredDefaultLabel {
+    param([Parameter(Mandatory)] [string] $DefaultName)
+
+    $def       = $null
+    $parentDef = $null
+    foreach ($lbl in $Config.Labels) {
+        if ($lbl.Name -eq $DefaultName) { $def = $lbl; break }
+        foreach ($sub in @($lbl.SubLabels)) {
+            if ($sub -and $sub.Name -eq $DefaultName) { $def = $sub; $parentDef = $lbl; break }
+        }
+        if ($def) { break }
+    }
+
+    $display = if ($def) { $def.DisplayName } else { $DefaultName }
+
+    if ($parentDef) {
+        # Sub-label default: resolve its parent first (handles adopted
+        # MS-default parents whose live Name is a GUID via DisplayName), then
+        # match the sub-label within the parent's scope so adopted sub-labels
+        # match by DisplayName even though their internal Name is a GUID.
+        $parentObj = Get-LabelByName -Name $parentDef.Name -DisplayName $parentDef.DisplayName -Scope 'TopLevel'
+        $parentId  = if ($parentObj) { $parentObj.Guid } else { $null }
+        $scope     = if ($parentId) { 'Parent' } else { 'Any' }
+        return Get-LabelByName -Name $DefaultName -DisplayName $display -ParentId $parentId -Scope $scope
+    }
+
+    # Top-level default (or a Name not found in config): resolve at top-level
+    # scope, which already matches adopted MS-default parents by DisplayName.
+    return Get-LabelByName -Name $DefaultName -DisplayName $display -Scope 'TopLevel'
+}
+
 # Read a single advanced-setting key (e.g. 'color') off a live Get-Label
 # object. IPPS surfaces these as a `Settings` collection whose ToString()
 # renders each entry as `[key, value]` (e.g. `[color, #13A10E]`). Parsing
@@ -1977,18 +2020,11 @@ if ($existingPolicy -and -not $policyOwned) {
 }
 
 # Resolve default label by name OR display name (handles adopted labels).
-# The default applied label may be a sub-label, so search both parent and
-# sub-label entries in the config to find the matching DisplayName.
-$defaultDef = $null
-foreach ($lbl in $Config.Labels) {
-    if ($lbl.Name -eq $policyCfg.DefaultLabel) { $defaultDef = $lbl; break }
-    foreach ($sub in @($lbl.SubLabels)) {
-        if ($sub -and $sub.Name -eq $policyCfg.DefaultLabel) { $defaultDef = $sub; break }
-    }
-    if ($defaultDef) { break }
-}
-$defaultDisplay = if ($defaultDef) { $defaultDef.DisplayName } else { $policyCfg.DefaultLabel }
-$defaultLabelObj = Get-LabelByName -Name $policyCfg.DefaultLabel -DisplayName $defaultDisplay
+# Parent-aware: the default applied label may be a sub-label, and on tenants
+# that already had the label it was adopted from (so its live internal Name is
+# a GUID), a top-level-only lookup would miss it. Resolve-ConfiguredDefaultLabel
+# matches sub-label defaults within their parent's scope.
+$defaultLabelObj = Resolve-ConfiguredDefaultLabel -DefaultName $policyCfg.DefaultLabel
 if (-not $defaultLabelObj) {
     if ($WhatIfPreference) {
         Write-Host "  What if: default label '$($policyCfg.DefaultLabel)' would be created earlier in this run; previewing publish step with placeholder GUID." -ForegroundColor DarkYellow
@@ -2005,16 +2041,7 @@ if (-not $defaultLabelObj) {
 # separate per-app default for email; documents continue to use DefaultLabel.
 $emailDefaultLabelObj = $null
 if ($policyCfg.DefaultLabelForEmail) {
-    $emailDef = $null
-    foreach ($lbl in $Config.Labels) {
-        if ($lbl.Name -eq $policyCfg.DefaultLabelForEmail) { $emailDef = $lbl; break }
-        foreach ($sub in @($lbl.SubLabels)) {
-            if ($sub -and $sub.Name -eq $policyCfg.DefaultLabelForEmail) { $emailDef = $sub; break }
-        }
-        if ($emailDef) { break }
-    }
-    $emailDisplay = if ($emailDef) { $emailDef.DisplayName } else { $policyCfg.DefaultLabelForEmail }
-    $emailDefaultLabelObj = Get-LabelByName -Name $policyCfg.DefaultLabelForEmail -DisplayName $emailDisplay
+    $emailDefaultLabelObj = Resolve-ConfiguredDefaultLabel -DefaultName $policyCfg.DefaultLabelForEmail
     if (-not $emailDefaultLabelObj) {
         if ($WhatIfPreference) {
             Write-Host "  What if: email default label '$($policyCfg.DefaultLabelForEmail)' would be created earlier in this run; previewing publish step with placeholder GUID." -ForegroundColor DarkYellow
