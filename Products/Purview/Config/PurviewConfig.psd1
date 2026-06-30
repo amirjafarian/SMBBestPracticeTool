@@ -167,22 +167,18 @@
                     ContentType = 'File, Email, Site, UnifiedGroup'
                 }
                 @{
-                    Name        = 'ConfidentialSpecificPeople'
-                    DisplayName = 'Specific People'
-                    Tooltip     = 'Confidential data shared with specific people inside or outside the organization. Encryption is applied at apply time; the user picks who gets access (Outlook: Do Not Forward).'
+                    # Consolidated Confidential sub-label: replaces the former
+                    # 'Specific People' + 'Internal Exception' sub-labels, renamed to
+                    # the Microsoft built-in 'Trusted People' default (ordinal 0008) so
+                    # the tool ADOPTS the existing default instead of creating duplicates.
+                    # Carries the encrypted (UserDefined / Outlook Do Not Forward) protection.
+                    Name        = 'TrustedPeople'
+                    DisplayName = 'Trusted People'
+                    Tooltip     = 'Confidential data shared with specific trusted people inside or outside the organization. Encryption is applied; trusted recipients can reshare as needed (Outlook: Encrypt-Only).'
                     Color       = '#EAA300'
                     Encrypt     = $true
                     ProtectionType = 'UserDefined'
-                    UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
-                    ContentMark = $true
-                    FooterText  = 'Classified as Confidential'
-                }
-                @{
-                    Name        = 'ConfidentialInternalException'
-                    DisplayName = 'Internal Exception'
-                    Tooltip     = 'Confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). No encryption is applied; the label is informational and adds a footer marking.'
-                    Color       = '#EAA300'
-                    Encrypt     = $false
+                    UserDefinedOutlookBehavior = 'EncryptOnly'   # Outlook: Encrypt-Only (matches the MS default Trusted People; trusted people can reshare)
                     ContentMark = $true
                     FooterText  = 'Classified as Confidential'
                 }
@@ -246,16 +242,6 @@
                     Encrypt     = $true
                     ProtectionType = 'UserDefined'
                     UserDefinedOutlookBehavior = 'DoNotForward'   # Outlook: Do Not Forward; Office apps prompt user
-                    ContentMark = $true
-                    FooterText  = 'Classified as Highly Confidential'
-                }
-                @{
-                    Name        = 'HCInternalException'
-                    DisplayName = 'Internal Exception'
-                    Tooltip     = 'Highly confidential data that is an internal exception (e.g. business-justified communication that should remain internal-only). Encrypts content with all-employees rights so it cannot leave the tenant.'
-                    Color       = '#A4262C'
-                    Encrypt     = $true
-                    ProtectionType = 'Template'
                     ContentMark = $true
                     FooterText  = 'Classified as Highly Confidential'
                 }
@@ -379,11 +365,9 @@
             # Resolved to GUIDs at runtime.
             LabelPaths  = @(
                 'Confidential/AllEmployees'
-                'Confidential/ConfidentialSpecificPeople'
-                'Confidential/ConfidentialInternalException'
+                'Confidential/TrustedPeople'
                 'HighlyConfidential/HCAllEmps'
                 'HighlyConfidential/HCSpecificPeople'
-                'HighlyConfidential/HCInternalException'
             )
             BlockAccess = $true
             # IMPORTANT — DO NOT DELETE 'BlockAccessScope' on the Exchange rule.
@@ -410,11 +394,9 @@
             RuleName    = 'SMBTool - DLP Rule - Confidential and HC - SPO ODFB'
             LabelPaths  = @(
                 'Confidential/AllEmployees'
-                'Confidential/ConfidentialSpecificPeople'
-                'Confidential/ConfidentialInternalException'
+                'Confidential/TrustedPeople'
                 'HighlyConfidential/HCAllEmps'
                 'HighlyConfidential/HCSpecificPeople'
-                'HighlyConfidential/HCInternalException'
             )
             BlockAccess = $true
             # SPO/ODFB: 'PerUser' = "Block only people outside your organization".
@@ -450,11 +432,9 @@
             RuleName    = 'SMBTool - DLP Rule - Endpoint Confidential and HC'
             LabelPaths  = @(
                 'Confidential/AllEmployees'
-                'Confidential/ConfidentialSpecificPeople'
-                'Confidential/ConfidentialInternalException'
+                'Confidential/TrustedPeople'
                 'HighlyConfidential/HCAllEmps'
                 'HighlyConfidential/HCSpecificPeople'
-                'HighlyConfidential/HCInternalException'
             )
             # Endpoint device-action restrictions. Hashtable keys are
             # case-sensitive: { Setting = '<name>'; Value = '<action>' }.
