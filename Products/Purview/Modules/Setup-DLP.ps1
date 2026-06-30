@@ -142,51 +142,36 @@ function Resolve-LabelByPath {
     }
 
     $childName = $parts[-1]
-    $child = $null
-    $maxLookupAttempts = 4
-    for ($la = 1; $la -le $maxLookupAttempts; $la++) {
-        $child = Get-Label -Identity $childName -ErrorAction SilentlyContinue
-        if ($child) { break }
-        if ($la -lt $maxLookupAttempts) {
-            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
-            Start-Sleep -Seconds 15
-        }
-    }
-    if ($child) {
-        $isSoftDeleted = $false
-        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
-        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
-        if ($isSoftDeleted) {
-            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by a DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels), or wait for the ~30-day purge."
-        }
-        return $child
-    }
 
-    # DisplayName fallback. Setup-SensitivityLabels.ps1 matches pre-existing
-    # labels by DisplayName (so a tenant where MOD Admin pre-created
-    # 'Highly Confidential' is left in place with a different internal Name).
-    # Get-Label -Identity only resolves Name/ImmutableId/Guid, so a Path that
-    # uses our configured internal Name will miss those adopted labels. Look
-    # up the configured DisplayName and search by that.
-    $cfgEntry = $null
-    if ($Config -and $Config.Labels) {
-        foreach ($_l in $Config.Labels) {
-            if ($_l.Name -eq $childName) {
-                $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
-                break
-            }
-            if ($_l.SubLabels) {
-                foreach ($_s in $_l.SubLabels) {
-                    if ($_s.Name -eq $childName) {
-                        $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
-                        break
-                    }
+    # Resolve WITHOUT sleeping first. Get-Label -Identity only matches
+    # Name/ImmutableId/Guid, so a Path that uses our configured internal Name
+    # MISSES adopted labels (Microsoft-default / wizard-created / modern-scheme)
+    # whose internal Name is a 'defa4170-...' GUID. The DisplayName fallback
+    # below catches those. Running both BEFORE any wait means adopted labels
+    # resolve on the first pass instead of after a 45s false 'IPPS propagation'
+    # loop. (See Design-Notes/2026-06-30-label-taxonomy-ms-default-adoption.md.)
+    $tryResolve = {
+        $hit = Get-Label -Identity $childName -ErrorAction SilentlyContinue
+        if ($hit) { return $hit }
+        $cfgEntry = $null
+        if ($Config -and $Config.Labels) {
+            foreach ($_l in $Config.Labels) {
+                if ($_l.Name -eq $childName) {
+                    $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
+                    break
                 }
-                if ($cfgEntry) { break }
+                if ($_l.SubLabels) {
+                    foreach ($_s in $_l.SubLabels) {
+                        if ($_s.Name -eq $childName) {
+                            $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
+                            break
+                        }
+                    }
+                    if ($cfgEntry) { break }
+                }
             }
         }
-    }
-    if ($cfgEntry) {
+        if (-not $cfgEntry) { return $null }
         $tenantLabels = @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
             -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
                   ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
@@ -205,8 +190,33 @@ function Resolve-LabelByPath {
         }
         if ($byDisplay) {
             Write-Host "    Label '$Path' resolved by DisplayName '$($cfgEntry.DisplayName)' (Id: $($byDisplay.Guid), Name: $($byDisplay.Name)) — adopted-existing label." -ForegroundColor DarkYellow
-            return $byDisplay
         }
+        return $byDisplay
+    }
+
+    $child = & $tryResolve
+
+    # Only WAIT for IPPS propagation when the label genuinely isn't visible yet
+    # (e.g. a label this same apply-mode run just created). Never wait under
+    # -WhatIf: nothing was created, so a wait is pure dead time.
+    if (-not $child -and -not $WhatIfPreference) {
+        $maxLookupAttempts = 3
+        for ($la = 1; $la -le $maxLookupAttempts; $la++) {
+            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 15
+            $child = & $tryResolve
+            if ($child) { break }
+        }
+    }
+
+    if ($child) {
+        $isSoftDeleted = $false
+        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
+        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
+        if ($isSoftDeleted) {
+            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by a DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels), or wait for the ~30-day purge."
+        }
+        return $child
     }
 
     if ($WhatIfPreference) {
