@@ -69,8 +69,8 @@ Security Best Practice Deployment" guide for Business Premium.
 | # | Task                | Default state                                                                                                        |
 |---|---------------------|----------------------------------------------------------------------------------------------------------------------|
 | 1 | **Tenant settings** | Enables Unified Audit Log, SharePoint AIP integration, PDF labelling                             |
-| 2 | **Sensitivity labels** | Creates `Public`, `General`, `Confidential` (parent + 3 sub-labels), `Highly Confidential` (parent + 3 sub-labels). Encryption: `Highly Confidential\All Employees` uses Co-Author rights, `Highly Confidential\Internal Exception` + `Confidential\Specific People` + `Highly Confidential\Specific People` use Reviewer / UserDefined; all rights scoped to your tenant only via `{TenantDomain}`. Labels ordered, then published with `General` as the email default. The 3 published labels (`General`, `Confidential\All Employees`, `Highly Confidential\All Employees`) carry container scope (`Site, UnifiedGroup`) so they appear in the Purview portal's Scope picker for Teams, Microsoft 365 Groups, and SharePoint sites — `-SkipContainerLabels` strips those bits without dropping the labels. |
-| 3 | **DLP policies**    | On Business Premium, two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive, both blocking external sharing of content labelled `Confidential\AllEmployees`. On **E5 / Microsoft Purview Suite**, license detection adds a third **Endpoint DLP** policy (device copy / print / USB / network-share auditing). All are created in **simulation** by default. Match condition uses the label **GUID**, not the display name. |
+| 2 | **Sensitivity labels** | Creates `Public`, `General` (label **group** + 2 assignable children), `Confidential` (parent + 2 sub-labels), `Highly Confidential` (parent + 2 sub-labels) — identified/adopted by Microsoft's stable internal signature so the taxonomy lands correctly on any tenant/locale/scheme. Encryption: `Highly Confidential\All Employees` uses Co-Author rights (Template); `Confidential\TrustedPeople` uses UserDefined/Encrypt-Only; `Highly Confidential\Specific People` uses UserDefined/Do-Not-Forward; all rights scoped to your tenant only via `{TenantDomain}`. Labels ordered, then published with `General \ Anyone (unrestricted)` as the email default. The 4 published labels (`General \ Anyone (unrestricted)`, `Confidential\All Employees`, `Highly Confidential\All Employees`, `Public`) carry container scope (`Site, UnifiedGroup`) so they appear in the Purview portal's Scope picker for Teams, Microsoft 365 Groups, and SharePoint sites — `-SkipContainerLabels` strips those bits without dropping the labels. "Inherit label from attachments" (`AttachmentAction = 'Automatic'`) is on by default. |
+| 3 | **DLP policies**    | On Business Premium, two policies (per Microsoft guidance): one for Exchange and one for SharePoint + OneDrive, both blocking external sharing of content labelled `Confidential\AllEmployees`, `Confidential\TrustedPeople`, `Highly Confidential\HCAllEmps`, or `Highly Confidential\HCSpecificPeople`. On **E5 / Microsoft Purview Suite**, license detection adds a third **Endpoint DLP** policy (device copy / print / USB / network-share auditing) matching the same 4 labels. All are created in **simulation** by default. Match condition uses the label **GUID**, not the display name. |
 | 4 | **Retention**       | **Opt-in** (pass `-ApplyRetention`). Exchange mailbox retention — keep 7 years, then delete (measured from item creation). |
 
 ### Optional add-ons
@@ -99,7 +99,7 @@ baseline. Some optional features require a higher SKU:
 | Retention policies (Exchange)                             | Business Premium                      | Always on                              |
 | Unified audit log (standard, 90-day retention)            | Business Premium                      | Always on                              |
 | Container labels (Group.Unified `EnableMIPLabels`)        | Business Premium (AAD P1+)            | Default on (BP includes Entra ID P1, the AAD-side requirement); opt out with `-SkipContainerLabels`. License auto-detect skips it automatically when no recognised BP/E5/Purview Suite SKU is found. |
-| Container scope on the 3 published labels (`Site`, `UnifiedGroup` on `General` / `Confidential\All Employees` / `Highly Confidential\All Employees`) | Business Premium (AAD P1+) | Default on; gated by the same `-SkipContainerLabels` switch. When stripped, the labels still ship with `File, Email` scope (no failure). Adoption uses UNION-not-replace so a customer-added scope is never lost. |
+| Container scope on the 4 published labels (`Site`, `UnifiedGroup` on `General \ Anyone (unrestricted)` / `Confidential\All Employees` / `Highly Confidential\All Employees`) | Business Premium (AAD P1+) | Default on; gated by the same `-SkipContainerLabels` switch. When stripped, the labels still ship with `File, Email` scope (no failure). Adoption uses UNION-not-replace so a customer-added scope is never lost. |
 | Premium Audit (1-year retention, `SearchQueryInitiated`)  | E5 / Audit (Premium) add-on           | Opt-in via `-EnablePremiumAudit`       |
 | Endpoint DLP (Devices)                                    | E5 / Purview Suite                    | **In the default config; auto-created in simulation** when license auto-detect finds an E5 / Purview Suite SKU. Soft-skipped on Business Premium and under `-BPOnly` (the Exchange + SPO/ODB policies still deploy). |
 | DLP for Defender for Cloud Apps / on-prem / Power BI      | E5 / Purview Suite                    | Not configured by default; rejected by `-BPOnly` |
@@ -514,7 +514,9 @@ The most common customisations:
 
 ## Encryption rights — tenant-scoped by default
 
-Two encrypting Template-protected labels apply usage rights:
+One Template-protected label applies usage rights (the other two encrypted
+sub-labels are UserDefined — the author picks recipients each time, not a
+fixed rights bundle):
 
 * **`Highly Confidential \ All Employees`** — uses Microsoft's wider
   **Co-Author** bundle (per-label override):
@@ -530,16 +532,15 @@ Two encrypting Template-protected labels apply usage rights:
   `Set-PolicyConfig -EnableLabelCoauth:$true` (toolkit param
   `-EnableLabelCoAuthoring`, opt-in) must also be on.
 
-* **`Highly Confidential \ Internal Exception`** — uses the global
-  default **Reviewer** bundle (no Copy, no Print, no OBJMODEL):
+The global default **Reviewer** bundle (no Copy, no Print, no OBJMODEL)
+applies to any OTHER Template-encrypted label that does NOT carry a
+per-label override:
 
   ```
   VIEW, VIEWRIGHTSDATA, DOCEDIT, EDIT, REPLY, REPLYALL, FORWARD
   ```
 
-The global default applies to any Template-encrypted label that does
-NOT carry a per-label `EncryptionRightsDefinitions` field. To change
-the default, edit `EncryptionRightsDefinitions` in
+To change the default, edit `EncryptionRightsDefinitions` in
 `PurviewConfig.psd1`. To override for a specific label, add an
 `EncryptionRightsDefinitions = '...'` field on that label hashtable
 (same token semantics as the global default).
@@ -579,9 +580,9 @@ conversation. Full detail and mitigations are in
 
 | Sharp edge | Default behaviour | Why it matters |
 |---|---|---|
-| **Encrypted-label scope = your tenant only (not retroactive)** | The two Template-encrypted HC sub-labels grant rights to all users in your tenant via the `{TenantDomain}` token. | Files labelled BEFORE this toolkit ran (or before you tightened the scope) keep their old rights — re-label them if you need the new scope applied. B2B guests from OTHER tenants are excluded by default; if you need cross-tenant collaboration, switch to `{AuthenticatedUsers}` deliberately. |
-| **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
-| **`Confidential\Specific People` also prompts users** | UserDefined encryption — Outlook auto-applies Do Not Forward; Office desktop apps prompt the recipient list. | Same usability caveat as the HC variant. **Not** published by default. Encryption is enforced once published. |
+| **Encrypted-label scope = your tenant only (not retroactive)** | The Template-encrypted `Highly Confidential\All Employees` sub-label grants rights to all users in your tenant via the `{TenantDomain}` token. | Files labelled BEFORE this toolkit ran (or before you tightened the scope) keep their old rights — re-label them if you need the new scope applied. B2B guests from OTHER tenants are excluded by default; if you need cross-tenant collaboration, switch to `{AuthenticatedUsers}` deliberately. |
+| **`Highly Confidential\Specific People` prompts users** | Word/Excel/PowerPoint asks the user to pick who can open the file. Outlook auto-applies Do Not Forward. | Most users do not know how to respond to this dialog. **Not** published to end users by default — keep it that way unless you ship user training. |
+| **`Confidential\TrustedPeople` also prompts users** | UserDefined encryption — Outlook auto-applies Encrypt-Only (recipients can reshare); Office desktop apps prompt the recipient list. | Same usability caveat as the HC variant. **Not** published by default. Encryption is enforced once published. |
 | **Container labels are one-way** | `Group.Unified` `EnableMIPLabels=True` is set by default on every run (BP is the licensing floor and BP includes Entra ID P1). Pass `-SkipContainerLabels` to opt out before the first run. | Microsoft does not officially support reverting once set. Treat the default-on behaviour as decision-grade — confirm with the customer up front. |
 | **Endpoint DLP without device onboarding is theatre** | Endpoint DLP policy is created on E5 tenants when not `-BPOnly`. | Without Defender / Purview device onboarding, the policy enforces nothing. Looks deployed; protects nothing. |
 | **7-year retention deletes mail** | Tenant-wide retention deletes Exchange mail older than 7 years. | Aligns with most SMB regulatory frameworks (ATO / IRS / SEC / ASIC), but still wrong for some verticals (e.g. paediatric healthcare) and for customers who want no automatic deletion. See [`docs/Retention-Default-Risk.md`](docs/Retention-Default-Risk.md). |

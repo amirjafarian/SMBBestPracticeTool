@@ -23,7 +23,8 @@ permalink: /purview/end-user-adoption-guide/
 > 💡 The styled guide below is a **single self-contained HTML file**
 > (`Products/Purview/docs/End-User-Adoption-Guide.html`). It needs no server,
 > so you can send it to staff on its own, host it on an intranet page, or open
-> it offline. A `.docx` version is in the same folder for editing.
+> it offline. Edit the HTML (or the plain-text version below) directly —
+> there is no separate `.docx` copy to keep in sync.
 
 <iframe
   src="{{ '/Products/Purview/docs/End-User-Adoption-Guide.html' | relative_url }}"
@@ -72,18 +73,28 @@ PowerPoint, and Outlook. The labels you can pick are:
 | Label | Use for | What it does |
 |---|---|---|
 | **Public** | Marketing material, public press releases | Nothing — informational only |
-| **General** *(default for new emails)* | Routine internal email and documents | Nothing — informational only |
+| **General — Anyone (unrestricted)** *(default for new emails)* | Routine internal email and documents that can also go to external partners | Nothing — informational only |
 | **Confidential — All Employees** *(default for new documents)* | Internal-only contracts, plans, customer data | Adds a footer *"Classified as Confidential"* once visual marking is turned on. **Blocks external sharing after Day 30.** |
 | **Highly Confidential — All Employees** | Source code, pre-announce financials, customer PII, payroll | **Encrypts the file** so it can only be opened by people in your organisation. Adds a *"HIGHLY CONFIDENTIAL"* watermark when visual marking is turned on. Blocks external sharing after Day 30. |
 
+> ℹ️ In the Sensitivity picker, **General** and **Confidential** appear as
+> a category you expand to reach the actual label (e.g. *General >
+> Anyone (unrestricted)*). This guide refers to them by their full name
+> the first time and by the short family name (*General*, *Confidential*)
+> afterwards.
+
 ### What if I don't pick a label?
 
-* **New emails** auto-get *General* — fine for routine internal traffic.
+* **New emails** auto-get *General — Anyone (unrestricted)* — fine for routine internal traffic.
 * **New documents** auto-get *Confidential — All Employees* — safe default;
   it's only a problem if you intended to share externally. In that case,
   change the label to *General* or *Public* **before** sending.
 * **Existing files / emails** are not relabelled retroactively. The
   default only applies to new content.
+* **Emailing a labelled attachment?** If the attachment's label is more
+  sensitive than your email's current label, Outlook **silently upgrades
+  the email to match** ("inherit label from attachments") — you don't need
+  to manually raise the email's label yourself.
 
 ### What if I pick a lower label by mistake?
 
@@ -104,9 +115,11 @@ If you pick **Highly Confidential — All Employees** on a document:
   receives it (forwarded email, USB stick, file leak) **cannot open it**.
 * Inside your organisation, every employee can open, view, edit, save,
   reply, reply-all, and forward.
-* **Copy, print, and macros may be disabled** depending on how IT
-  configured the rollout. If you need any of those for legitimate
-  business reasons, contact the helpdesk.
+* **Copy, print, and macros are allowed by default** for this label
+  (a wider "Co-Author" rights bundle so Office co-authoring and search
+  work cleanly) — this may differ for other encrypted labels your IT
+  team adds later, so check with the helpdesk if something you expect
+  to work is blocked on a different label.
 * If you open the file **offline**, you have **30 days** before it
   re-checks with the server. Open it once online inside 30 days to
   reset the clock.
