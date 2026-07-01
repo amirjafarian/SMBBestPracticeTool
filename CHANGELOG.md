@@ -44,7 +44,51 @@ landed but not yet been tagged in a release appear under **Unreleased**.
 
 ## [Unreleased]
 
-_Nothing yet — new changes land here before the next tagged release._
+> **Note — significant redesign (within Purview).** This reworks Purview sensitivity-label
+> management to adopt Microsoft's built-in taxonomy by its stable signature, create MS-exact
+> labels on blank tenants, and support the modern label scheme. It is a substantial redesign
+> but stays within the existing Purview product, so it is slated for a **MINOR** bump
+> (`1.2.0`). MAJOR (`2.x`) is reserved for adding a **new product** (e.g. Defender).
+
+### Added
+
+- **[Purview] Region- and scheme-proof label adoption + creation via the Microsoft
+  `defa4170` signature.** Built-in labels are now identified by their stable internal
+  `defa4170-…` name instead of the (localized) display name, so adoption works identically
+  on English/French/German/… tenants and on both classic and modern label schemes. On
+  blank tenants the toolkit now *creates* labels with the same `defa4170` names, so they are
+  byte-identical to Microsoft's defaults (multitenant tools that look up by the standard
+  name work everywhere).
+- **[Purview] Blank modern-scheme tenant support.** Parents that own sub-labels are created
+  as label **groups** (`-IsLabelGroup`) on modern-scheme tenants, with automatic fallback to
+  a classic parent on classic tenants. Previously, deploying to a *blank* modern tenant
+  failed creating sub-labels with `InvalidParentLabelInModernLabelSchemeException`.
+- **[Purview] "Inherit label from attachments" is on by default.** Label policies now set
+  `AttachmentAction = Automatic`, so an email inherits the highest-priority label from its
+  attachments. Set `LabelPolicy.AttachmentAction` to `'Recommended'` (prompt) or `$null`
+  (off) in `PurviewConfig.psd1` to change it.
+
+### Changed
+
+- **[Purview] Sensitivity-label taxonomy aligned to the Microsoft built-in defaults.**
+  Confidential publishes **All Employees** + **Trusted People**; Highly Confidential
+  publishes **All Employees** + **Specific People**; **General** is now a label **group**
+  with **Anyone (unrestricted)** + **All Employees (unrestricted)**. The custom
+  `Specific People` (under Confidential) and `Internal Exception` sub-labels are removed and
+  consolidated into Trusted People / Specific People. **⚠️ On tenants where a previous
+  version already created those extra sub-labels, they become unmanaged — delete them in
+  Purview Admin.**
+- **[Purview] Email default targets the assignable `General\Anyone (unrestricted)` leaf**
+  (General is now a non-applicable group).
+- **[Purview] Soft-delete tombstone rename no longer adds ` v2` to the user-visible
+  DisplayName.** When a ~30-day tombstone blocks a re-created label, only the internal name
+  is versioned; the DisplayName stays clean (a tombstone does not reserve the DisplayName).
+
+### Fixed
+
+- **[Purview] No more 45-second false "IPPS propagation" waits** when resolving already-
+  existing (adopted) labels — they resolve on the first pass, and `-WhatIf` never waits. A
+  `-WhatIf` that previously idled ~14 minutes now runs straight through.
 
 ---
 
