@@ -22,13 +22,20 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## How versions work here
 
-This is an operations toolkit, so SemVer (`MAJOR.MINOR.PATCH`) is read as:
+This is an operations toolkit organised around **products** — a product is a
+tenant-facing workload with its own deployment path (e.g. `[Purview]`). SemVer
+(`MAJOR.MINOR.PATCH`) is read against those products:
 
 | Bump | Means | Example |
 |---|---|---|
-| **MAJOR** | A change to behaviour, a default, or a switch that **requires action from whoever runs the toolkit** or changes what happens in a tenant. | A default flips from off to on. |
-| **MINOR** | A **new** feature, switch, or product — backward compatible. | A new optional `-Switch`. |
+| **MAJOR** | A **new product** is added to the toolkit — a new tenant-facing workload with its own deployment path. | Adding Defender alongside Purview. |
+| **MINOR** | A **new feature, switch, or a redesign _within_ an existing product** — backward compatible for whoever runs it. | A new optional `-Switch`; the sensitivity-label signature redesign. |
 | **PATCH** | A **bug fix** with no behaviour change for correct usage. | A connect/auth reliability fix. |
+
+> A **changed default** (e.g. a switch that flips off→on, or a new tenant-side
+> effect) does **not** by itself force a MAJOR bump — it rides the MINOR/PATCH of
+> the product it belongs to — but it is **always** called out under **Changed**
+> so operators see it.
 
 Each entry is grouped under **Added / Changed / Deprecated / Removed / Fixed /
 Security**, and tagged by area (e.g. `[Purview]`, `[Site]`). Changes that have
