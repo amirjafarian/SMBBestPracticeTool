@@ -49,13 +49,13 @@ landed but not yet been tagged in a release appear under **Unreleased**.
 
 ---
 
-## [Unreleased]
+## [1.2.0] - 2026-07-01
 
 > **Note — significant redesign (within Purview).** This reworks Purview sensitivity-label
 > management to adopt Microsoft's built-in taxonomy by its stable signature, create MS-exact
 > labels on blank tenants, and support the modern label scheme. It is a substantial redesign
-> but stays within the existing Purview product, so it is slated for a **MINOR** bump
-> (`1.2.0`). MAJOR (`2.x`) is reserved for adding a **new product** (e.g. Defender).
+> but stays within the existing Purview product, so it ships as a **MINOR** bump
+> (`1.2.0`), not `2.0.0`. MAJOR (`2.x`) is reserved for adding a **new product** (e.g. Defender).
 
 ### Added
 
