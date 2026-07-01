@@ -66,13 +66,23 @@ shown (e.g. `LabelPolicy.DefaultLabel` means the `DefaultLabel` key inside the
 | Key | Default | What it controls |
 |---|---|---|
 | `LabelPolicy.DefaultLabel` | `AllEmployees` (Confidential\All Employees) | Default label applied to **documents** (Word/Excel/PowerPoint). |
-| `LabelPolicy.DefaultLabelForEmail` | `General` | Default label for **Outlook email**. Set `$null` to fall back to `DefaultLabel`. |
-| `LabelPolicy.PublishedLabels` | `Public, General, AllEmployees, HCAllEmps` | Subset of labels **published** to end users. All labels in `Labels` are still *created*; only these are *visible*. Set `$null`/empty to publish everything. |
+| `LabelPolicy.DefaultLabelForEmail` | `GeneralAnyone` (General \ Anyone (unrestricted)) | Default label for **Outlook email**. `General` itself is a non-applicable label group, so the default points at its assignable child. Set `$null` to fall back to `DefaultLabel`. |
+| `LabelPolicy.PublishedLabels` | `Public, GeneralAnyone, AllEmployees, HCAllEmps` | Subset of labels **published** to end users. All labels in `Labels` are still *created*; only these are *visible*. Set `$null`/empty to publish everything. |
+| `LabelPolicy.AttachmentAction` | `'Automatic'` | "Inherit label from attachments": when a user sends an email with labelled attachments, silently applies the highest-priority attachment label to the email. `'Recommended'` prompts the user instead; `$null` turns the feature off. |
 | `LabelPolicy.MandatoryLabelling` | `$true` | Forces users to pick a label before saving/sending. Set `$false` only if the customer can't tolerate the prompt during rollout (training is the better answer). |
 | `LabelPolicy.DowngradeJustification` | `$true` | Require a justification when a user lowers a label's sensitivity. |
 
 To change a label's display name, tooltip, colour, priority, encryption, or
 scope, edit the relevant hashtable in the `Labels = @( ... )` array.
+
+> ℹ️ **`BuiltInName` — don't remove it.** Each built-in label carries a
+> `BuiltInName` field holding Microsoft's stable internal signature
+> (`defa4170-0d19-0005-NNNN-…`). The toolkit uses it to **adopt** the label
+> if the tenant already has it (any locale, any label scheme) and to
+> **create** it byte-identical to Microsoft's default on a blank tenant.
+> You can freely change `DisplayName`/`Tooltip`/colour/encryption — just
+> don't remove or repoint `BuiltInName` on a built-in label, or adoption
+> will stop matching it and the toolkit may create a duplicate.
 
 ### Encryption rights
 

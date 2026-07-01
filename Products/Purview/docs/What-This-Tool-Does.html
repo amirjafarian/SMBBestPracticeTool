@@ -243,7 +243,7 @@
     </div>
     <div class="card on">
       <h3>2. Sensitivity labels <span class="tag on">Default</span></h3>
-      <p>Creates the 3 parent &amp; 6 sub-labels, orders them, applies encryption to Highly Confidential, and publishes the user-facing subset.</p>
+      <p>Creates 3 label groups (Public is standalone) &amp; 6 assignable children, orders them, applies encryption to Highly Confidential and Confidential\Trusted People, and publishes the user-facing subset.</p>
       <p class="meta"><span class="tag opt">-SkipLabels</span> to opt out</p>
     </div>
     <div class="card on">
@@ -289,16 +289,28 @@
 <!-- ============================================================= -->
 <section id="labels">
   <h2><span class="num">4</span> Sensitivity labels created</h2>
-  <p style="margin-top:8px;color:var(--muted)">Eight labels &mdash; three parents and five sub-labels &mdash; ordered from least sensitive
-    (top) to most sensitive (bottom). Encryption is intentionally only applied to the three
-    <em>Highly Confidential</em> sub-labels; Confidential labels carry footer markings only, which is the
-    SMB-friendly profile that minimises breakage with third-party tooling.</p>
+  <p style="margin-top:8px;color:var(--muted)">Ten labels &mdash; Public plus three label groups (General, Confidential,
+    Highly Confidential), each with two assignable children &mdash; ordered from least sensitive
+    (top) to most sensitive (bottom). Labels are identified/created by Microsoft's stable
+    internal signature so the same taxonomy lands correctly on any tenant, locale, or label
+    scheme (classic or modern). Encryption is intentionally only applied to
+    <code>Highly Confidential\All Employees</code> (Template), <code>Highly Confidential\Specific
+    People</code> and <code>Confidential\Trusted People</code> (both UserDefined); every other
+    label carries footer/watermark marking only, which is the SMB-friendly profile that
+    minimises breakage with third-party tooling.</p>
 
   <p style="margin-top:6px;color:var(--muted);font-size:13px">
     The <strong>Applies to</strong> line under each label reflects the scope the script sets.
-    The three <em>published</em> labels (<strong>General</strong>,
+    The four <em>published</em> labels (<strong>Public</strong>,
+    <strong>General &mdash; Anyone (unrestricted)</strong>,
     <strong>Confidential &mdash; All Employees</strong>,
-    <strong>Highly Confidential &mdash; All Employees</strong>) ship with
+    <strong>Highly Confidential &mdash; All Employees</strong>) are the only ones shown in the
+    Office Sensitivity picker; the other three (<code>General \ All Employees
+    (unrestricted)</code>, <code>Confidential \ Trusted People</code>, <code>Highly
+    Confidential \ Specific People</code>) are created so DLP can match on them but stay off
+    the client UI. Of the published set, <strong>General &mdash; Anyone (unrestricted)</strong>,
+    <strong>Confidential &mdash; All Employees</strong> and
+    <strong>Highly Confidential &mdash; All Employees</strong> ship with
     <em>Files &middot; Emails &middot; Groups &amp; sites</em> so they appear in the
     Sensitivity picker when a user creates a new Team, M365 Group or SharePoint site;
     every other label starts at <em>Files &middot; Emails</em> only. Pass
@@ -335,6 +347,19 @@
     <div class="label-row">
       <div class="pri">2</div>
       <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3A96DD;margin-right:8px;vertical-align:middle"></span>General
+        <small>Label group &mdash; non-applicable container; users pick one of the two children below.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip muted"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip muted"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">Label group</span></div>
+    </div>
+    <div class="label-row child">
+      <div class="pri">3</div>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3A96DD;margin-right:8px;vertical-align:middle"></span>General &mdash; Anyone (unrestricted)
         <small>Internal data, may be shared with external partners. No protection. <strong>Default for new email.</strong></small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
@@ -345,11 +370,10 @@
       </div>
       <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span><span class="tag brand">Email default</span><span class="tag brand">Published</span></div>
     </div>
-
-    <div class="label-row">
-      <div class="pri">3</div>
-      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential
-        <small>Parent only &mdash; users pick one of the three sub-labels below.</small>
+    <div class="label-row child">
+      <div class="pri">4</div>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3A96DD;margin-right:8px;vertical-align:middle"></span>General &mdash; All Employees (unrestricted)
+        <small>Internal data, not for external sharing without confirming with the data owner. No protection. Not published by default.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
@@ -357,10 +381,24 @@
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag off">Parent</span></div>
+      <div class="tags"><span class="tag off">No encryption</span><span class="tag off">No marking</span></div>
+    </div>
+
+    <div class="label-row">
+      <div class="pri">5</div>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential
+        <small>Label group &mdash; non-applicable container; users pick one of the two children below.</small>
+        <div class="scope"><span class="label-prefix">Applies to:</span>
+          <span class="chip muted"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip muted"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
+          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
+        </div>
+      </div>
+      <div class="tags"><span class="tag off">Label group</span></div>
     </div>
     <div class="label-row child">
-      <div class="pri">4</div>
+      <div class="pri">6</div>
       <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; All Employees
         <small>Footer marking "Classified as Confidential". <strong>Default for new documents.</strong></small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
@@ -373,9 +411,9 @@
       <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span><span class="tag brand">Document default</span><span class="tag brand">Published</span></div>
     </div>
     <div class="label-row child">
-      <div class="pri">5</div>
-      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; Specific People
-        <small>User-defined encryption &mdash; Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients at apply time. Footer marking added.</small>
+      <div class="pri">7</div>
+      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; Trusted People
+        <small>User-defined encryption &mdash; Outlook applies <em>Encrypt-Only</em> (trusted recipients can reshare); Office prompts the user to pick recipients at apply time. Footer marking added. Not published by default.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
@@ -385,35 +423,22 @@
       </div>
       <div class="tags"><span class="tag on">Encryption (user-defined)</span><span class="tag on">Footer</span></div>
     </div>
-    <div class="label-row child">
-      <div class="pri">6</div>
-      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#EAA300;margin-right:8px;vertical-align:middle"></span>Confidential &mdash; Internal Exception
-        <small>Footer only. Business-justified internal-only communication.</small>
-        <div class="scope"><span class="label-prefix">Applies to:</span>
-          <span class="chip"><span class="ico">&#128196;</span>Files</span>
-          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
-          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
-          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
-        </div>
-      </div>
-      <div class="tags"><span class="tag off">No encryption</span><span class="tag on">Footer</span></div>
-    </div>
 
     <div class="label-row">
-      <div class="pri">7</div>
+      <div class="pri">8</div>
       <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential
-        <small>Parent. Adds watermark "HIGHLY CONFIDENTIAL" to all sub-labels.</small>
+        <small>Label group. Adds watermark "HIGHLY CONFIDENTIAL" to all children.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
-          <span class="chip"><span class="ico">&#128196;</span>Files</span>
-          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
+          <span class="chip muted"><span class="ico">&#128196;</span>Files</span>
+          <span class="chip muted"><span class="ico">&#9993;&#65039;</span>Emails</span>
           <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
           <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
         </div>
       </div>
-      <div class="tags"><span class="tag on">Watermark</span></div>
+      <div class="tags"><span class="tag on">Watermark</span><span class="tag off">Label group</span></div>
     </div>
     <div class="label-row child">
-      <div class="pri">8</div>
+      <div class="pri">9</div>
       <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; All Employees
         <small>Encrypted with a per-label <em>Co-Author</em> rights bundle scoped to your tenant. All staff can view, edit, save, copy, print, allow macros, reply and forward &mdash; wider than the global <em>Reviewer</em> default so Office co-authoring and Microsoft Search work cleanly.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
@@ -426,9 +451,9 @@
       <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span><span class="tag brand">Published</span></div>
     </div>
     <div class="label-row child">
-      <div class="pri">9</div>
+      <div class="pri">10</div>
       <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; Specific People
-        <small>User-defined encryption. Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients.</small>
+        <small>User-defined encryption. Outlook applies <em>Do Not Forward</em>; Office prompts the user to pick recipients. Not published by default.</small>
         <div class="scope"><span class="label-prefix">Applies to:</span>
           <span class="chip"><span class="ico">&#128196;</span>Files</span>
           <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
@@ -437,19 +462,6 @@
         </div>
       </div>
       <div class="tags"><span class="tag on">Encryption (user-defined)</span><span class="tag on">Footer</span></div>
-    </div>
-    <div class="label-row child">
-      <div class="pri">10</div>
-      <div class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#A4262C;margin-right:8px;vertical-align:middle"></span>Highly Confidential &mdash; Internal Exception
-        <small>Encrypted, all-employees rights. Cannot leave the tenant.</small>
-        <div class="scope"><span class="label-prefix">Applies to:</span>
-          <span class="chip"><span class="ico">&#128196;</span>Files</span>
-          <span class="chip"><span class="ico">&#9993;&#65039;</span>Emails</span>
-          <span class="chip muted"><span class="ico">&#128101;</span>Groups &amp; sites</span>
-          <span class="chip muted"><span class="ico">&#128197;</span>Meetings</span>
-        </div>
-      </div>
-      <div class="tags"><span class="tag on">Encryption (template)</span><span class="tag on">Footer</span></div>
     </div>
   </div>
 
@@ -481,7 +493,7 @@
 <!-- ============================================================= -->
 <section id="publish">
   <h2><span class="num">5</span> Label publishing &mdash; what end users see</h2>
-  <p style="margin-top:8px;color:var(--muted)">All eight labels are <em>created</em> in the tenant.
+  <p style="margin-top:8px;color:var(--muted)">All ten labels are <em>created</em> in the tenant.
     Only the labels below are <em>published</em> to end users via the
     <code>SMBTool - Default Label Policy</code>. Sub-label names are auto-expanded to include their
     parent so the Purview hierarchy stays valid.</p>
@@ -489,12 +501,14 @@
     <thead><tr><th>Setting</th><th>Value</th><th>What it means for end users</th></tr></thead>
     <tbody>
       <tr><td>Published labels</td>
-        <td>Public &middot; General &middot; Confidential / All Employees &middot; Highly Confidential / All Employees</td>
+        <td>Public &middot; General / Anyone (unrestricted) &middot; Confidential / All Employees &middot; Highly Confidential / All Employees</td>
         <td>The four labels that appear in the Office "Sensitivity" picker for every licensed user.</td></tr>
       <tr><td>Default for documents</td><td><strong>Confidential / All Employees</strong></td>
         <td>Every new Word, Excel and PowerPoint document is automatically tagged so it carries the Confidential footer.</td></tr>
-      <tr><td>Default for email</td><td><strong>General</strong></td>
-        <td>Every new Outlook message is pre-tagged General so routine internal mail doesn't trigger DLP.</td></tr>
+      <tr><td>Default for email</td><td><strong>General / Anyone (unrestricted)</strong></td>
+        <td>Every new Outlook message is pre-tagged General so routine internal mail doesn't trigger DLP. <code>General</code> itself is a non-applicable label group.</td></tr>
+      <tr><td>Inherit label from attachments <span class="tag on">ON</span></td><td><code>AttachmentAction = 'Automatic'</code></td>
+        <td>If an outgoing email has a labelled attachment with a higher-priority label than the email's current label, Outlook silently upgrades the email to match &mdash; no prompt.</td></tr>
       <tr><td>Mandatory labelling <span class="tag on">ON</span></td><td><code>$true</code></td>
         <td>Office prompts the user to pick a sensitivity label before saving a new document or sending a new email. Closes the untagged-content hole that breaks DLP, auto-classification and Copilot exclusions.</td></tr>
       <tr><td>Downgrade justification <span class="tag on">ON</span></td><td><code>$true</code></td>

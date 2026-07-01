@@ -154,51 +154,48 @@ function Resolve-LabelByPath {
     }
 
     $childName = $parts[-1]
-    $child = $null
-    $maxLookupAttempts = 4
-    for ($la = 1; $la -le $maxLookupAttempts; $la++) {
-        $child = Get-Label -Identity $childName -ErrorAction SilentlyContinue
-        if ($child) { break }
-        if ($la -lt $maxLookupAttempts) {
-            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
-            Start-Sleep -Seconds 15
-        }
-    }
-    if ($child) {
-        $isSoftDeleted = $false
-        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
-        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
-        if ($isSoftDeleted) {
-            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by an AI DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels) or wait for the ~30-day purge."
-        }
-        return $child
-    }
 
-    # DisplayName fallback. Setup-SensitivityLabels.ps1 matches pre-existing
-    # labels by DisplayName (so a tenant where MOD Admin pre-created
-    # 'Highly Confidential' is left in place with a different internal Name).
-    # Get-Label -Identity only resolves Name/ImmutableId/Guid, so a Path that
-    # uses our configured internal Name will miss those adopted labels. Look
-    # up the configured DisplayName and search by that.
-    $cfgEntry = $null
-    if ($Config -and $Config.Labels) {
-        foreach ($_l in $Config.Labels) {
-            if ($_l.Name -eq $childName) {
-                $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
-                break
-            }
-            if ($_l.SubLabels) {
-                foreach ($_s in $_l.SubLabels) {
-                    if ($_s.Name -eq $childName) {
-                        $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
-                        break
-                    }
+    # Resolve WITHOUT sleeping first (see Setup-DLP.ps1 for rationale): adopted
+    # Microsoft-default / modern-scheme labels have a 'defa4170-...' GUID Name
+    # that Get-Label -Identity misses, so the DisplayName fallback below catches
+    # them on the first pass instead of after a 45s false 'IPPS propagation' loop.
+    $tryResolve = {
+        $hit = Get-Label -Identity $childName -ErrorAction SilentlyContinue
+        if ($hit) { return $hit }
+        $cfgEntry = $null
+        if ($Config -and $Config.Labels) {
+            foreach ($_l in $Config.Labels) {
+                if ($_l.Name -eq $childName) {
+                    $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null; BuiltInName = $_l.BuiltInName }
+                    break
                 }
-                if ($cfgEntry) { break }
+                if ($_l.SubLabels) {
+                    foreach ($_s in $_l.SubLabels) {
+                        if ($_s.Name -eq $childName) {
+                            $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName; BuiltInName = $_s.BuiltInName }
+                            break
+                        }
+                    }
+                    if ($cfgEntry) { break }
+                }
             }
         }
-    }
-    if ($cfgEntry) {
+        if (-not $cfgEntry) { return $null }
+
+        # Signature match (region/scheme-proof): adopt the Microsoft built-in label
+        # by its 'defa4170-...' Name regardless of DisplayName localization. Try the
+        # modern-scheme group form ('<id>Group') first so a parent path resolves the
+        # label GROUP; fall back to the base id (leaves + classic parents).
+        if ($cfgEntry.BuiltInName) {
+            $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName + 'Group') -ErrorAction SilentlyContinue
+            if (-not $sig) { $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName) -ErrorAction SilentlyContinue }
+            if ($sig -and -not (($sig.PSObject.Properties.Name -contains 'Mode' -and $sig.Mode -eq 'PendingDeletion') -or
+                                ($sig.PSObject.Properties.Name -contains 'Disabled' -and $sig.Disabled -eq $true))) {
+                Write-Host "    Label '$Path' resolved by Name signature (defa4170) (Id: $($sig.Guid), Name: $($sig.Name)) — adopted built-in label." -ForegroundColor DarkYellow
+                Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Resolve label path' -Target $Path -Status 'Adopted' -Detail "Matched by Name signature (defa4170) -> existing GUID $($sig.Guid)."
+                return $sig
+            }
+        }
         $tenantLabels = @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
             -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
                   ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
@@ -218,8 +215,32 @@ function Resolve-LabelByPath {
         if ($byDisplay) {
             Write-Host "    Label '$Path' resolved by DisplayName '$($cfgEntry.DisplayName)' (Id: $($byDisplay.Guid), Name: $($byDisplay.Name)) — adopted-existing label." -ForegroundColor DarkYellow
             Add-RunLogEntry -Module 'Setup-AIGovernance' -Action 'Resolve label path' -Target $Path -Status 'Adopted' -Detail "Matched by DisplayName '$($cfgEntry.DisplayName)' -> existing GUID $($byDisplay.Guid)."
-            return $byDisplay
         }
+        return $byDisplay
+    }
+
+    $child = & $tryResolve
+
+    # Only WAIT for IPPS propagation when the label genuinely isn't visible yet
+    # (a label this same apply-mode run just created). Never wait under -WhatIf.
+    if (-not $child -and -not $WhatIfPreference) {
+        $maxLookupAttempts = 3
+        for ($la = 1; $la -le $maxLookupAttempts; $la++) {
+            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 15
+            $child = & $tryResolve
+            if ($child) { break }
+        }
+    }
+
+    if ($child) {
+        $isSoftDeleted = $false
+        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
+        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
+        if ($isSoftDeleted) {
+            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by an AI DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels) or wait for the ~30-day purge."
+        }
+        return $child
     }
 
     if ($WhatIfPreference) {

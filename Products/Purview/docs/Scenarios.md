@@ -47,7 +47,7 @@ expanding when **E5 / Purview Suite** licensing is present. It covers
 | # | Scenario | Default behaviour | Customer impact |
 |---|----------|-------------------|-----------------|
 | 1 | **Foundational tenant settings** | Enables audit log, SharePoint label integration, PDF labels | Invisible to end users |
-| 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults; publishes 4; sets `General` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
+| 2 | **Sensitivity labels** | Creates 3 parents + 6 sub-labels with defaults (`General` is a label **group**); publishes 4; sets `General \ Anyone (unrestricted)` as default for email and `Confidential\All Employees` as default for documents | Users see new labels in Outlook/Office; new documents auto-get a footer |
 | 3 | **Data Loss Prevention (DLP)** | Blocks external sharing of Confidential and Highly Confidential content from Exchange and SharePoint/OneDrive (in **simulation** mode by default) | Telemetry only until the policy is promoted out of simulation |
 | 4 | **Retention** | **Opt-in via `-ApplyRetention`.** Keeps Exchange mailbox content for 7 years, then deletes | Long-tail effect — mail older than 7 years starts to be removed |
 | 5 | **AI governance (Copilot DLP)** | Opt-in — blocks Microsoft 365 Copilot from processing Highly Confidential content | Copilot ignores HC files when surfacing answers |
@@ -84,57 +84,67 @@ labels can be applied but won't be enforced or visible everywhere.
 **Always runs unless `-SkipLabels` is passed.**
 
 The toolkit creates an SMB-tuned subset of Microsoft's documented
-[default sensitivity labels](https://learn.microsoft.com/en-us/purview/default-sensitivity-labels-policies):
+[default sensitivity labels](https://learn.microsoft.com/en-us/purview/default-sensitivity-labels-policies),
+identified and adopted by their stable Microsoft internal signature
+(`defa4170-0d19-0005-NNNN-…`) so the same taxonomy lands correctly on any
+tenant, region/locale, or label scheme (classic or modern):
 
 ```
 Public
-General                           ← default for EMAIL
+General                           ← label GROUP; default for EMAIL is its child below
+├─ Anyone (unrestricted)          ← default for EMAIL
+└─ All Employees (unrestricted)
 Confidential
 ├─ All Employees                  ← default for DOCUMENTS (footer only)
-├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
-└─ Internal Exception             (footer only)
+└─ Trusted People                 (footer + ENCRYPTED, UserDefined/Encrypt-Only — user picks who; recipients can reshare)
 Highly Confidential               (watermark "HIGHLY CONFIDENTIAL")
 ├─ All Employees                  (footer + ENCRYPTED, Co-Author rights, all users in your tenant only)
-├─ Specific People                (footer + ENCRYPTED, UserDefined — user picks who)
-└─ Internal Exception             (footer + ENCRYPTED, Reviewer rights, all users in your tenant only)
+└─ Specific People                (footer + ENCRYPTED, UserDefined/Do-Not-Forward — user picks who)
 ```
+
+On **modern label scheme** tenants, `General`, `Confidential`, and `Highly
+Confidential` are created as **label groups** (non-applicable containers);
+their children carry the applicable content. On **classic scheme** tenants
+they're created as regular parent labels. The toolkit detects the tenant's
+scheme and branches automatically — no config change needed.
 
 ### What gets published vs created
 
 | Created in tenant | Published to users by default |
 |---|---|
-| All 9 labels above | `Public`, `General`, `Confidential\All Employees`, `Highly Confidential\All Employees` |
+| All 8 labels above | `Public`, `General \ Anyone (unrestricted)`, `Confidential\All Employees`, `Highly Confidential\All Employees` |
 
 The other sub-labels are created so DLP can match on them, but kept off the
 client UI to reduce decision fatigue. Edit `LabelPolicy.PublishedLabels`
 in [`PurviewConfig.psd1`](../Config/PurviewConfig.psd1) to surface more.
-**Note:** the two "Specific People" sub-labels apply UserDefined
-encryption — Outlook auto-applies Do Not Forward; Word / Excel /
-PowerPoint prompt the recipient list at apply time. Most end users do
+**Note:** `Confidential\TrustedPeople` and `Highly Confidential\Specific
+People` apply UserDefined encryption — Word / Excel / PowerPoint prompt
+the recipient list at apply time (Outlook auto-applies Encrypt-Only for
+Trusted People, Do Not Forward for Specific People). Most end users do
 not know how to respond to that dialog, so the default ships them
 unpublished. Promote them only after user training.
 
 ### Encryption — who can open the file?
 
-The **two Template-encrypted Highly Confidential sub-labels** (`All
-Employees`, `Internal Exception`) grant rights to **all users in your
-tenant only**. The rights bundle uses the `{TenantDomain}` token, which
-the toolkit resolves at run time against your auto-discovered tenant
-identity. Per Entra rights-management semantics, ANY verified domain in
-your tenant expands to ALL verified domains in your tenant, so this
-explicitly EXCLUDES external `AuthenticatedUsers` (B2B guests attached
-to OTHER tenants, social/MSA accounts, OTP users from other M365
-tenants).
+The **Template-encrypted Highly Confidential \ All Employees** sub-label
+grants rights to **all users in your tenant only**. The rights bundle uses
+the `{TenantDomain}` token, which the toolkit resolves at run time against
+your auto-discovered tenant identity. Per Entra rights-management
+semantics, ANY verified domain in your tenant expands to ALL verified
+domains in your tenant, so this explicitly EXCLUDES external
+`AuthenticatedUsers` (B2B guests attached to OTHER tenants, social/MSA
+accounts, OTP users from other M365 tenants).
 
-The **two UserDefined Specific People sub-labels** (`Confidential\Specific
-People`, `Highly Confidential\Specific People`) let the message / file
-author pick the exact recipients at apply time. Outlook auto-applies Do
-Not Forward; Word / Excel / PowerPoint show a recipient-picker dialog.
+The **two UserDefined sub-labels** (`Confidential\TrustedPeople`,
+`Highly Confidential\Specific People`) let the message / file author pick
+the exact recipients at apply time. Outlook auto-applies **Encrypt-Only**
+for Trusted People (recipients can reshare) and **Do Not Forward** for
+Specific People; Word / Excel / PowerPoint show a recipient-picker dialog
+for both.
 
 | Label | Rights bundle | Office co-authoring (rights side) | Programmatic access |
 |---|---|---|---|
 | `Highly Confidential \ All Employees` (default) | Microsoft "Co-Author" — View, Edit, Save, Copy, Print, Allow Macros, Reply, Reply All, Forward | ✅ | ✅ |
-| `Highly Confidential \ Internal Exception` (default) | Microsoft "Reviewer" — View, Edit, Save, Reply, Reply All, Forward | ❌ | ❌ |
 | Any other Template-encrypted label (no per-label override) | Inherits global default (Reviewer) | ❌ | ❌ |
 
 The toolkit's global default is the conservative "Reviewer" bundle
@@ -174,7 +184,11 @@ you've validated rendering with the customer. No re-edit per label needed.
 
 ### Default labels
 
-* **Email:** `General` (Outlook auto-applies on new messages).
+* **Email:** `General \ Anyone (unrestricted)` (Outlook auto-applies on new
+  messages; `General` itself is a non-applicable label group). If the
+  attachment inherits a higher-priority label, "Inherit label from
+  attachments" (`AttachmentAction = 'Automatic'`, on by default) silently
+  applies that label to the email instead.
 * **Documents:** `Confidential\All Employees` (Word / Excel / PowerPoint /
   service-side defaults). Every new document gets a footer.
 

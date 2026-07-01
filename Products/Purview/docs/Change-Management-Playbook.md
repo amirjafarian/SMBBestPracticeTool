@@ -155,8 +155,8 @@ them in Phase 0.
 
 ### 1. Encrypted-label rights are tenant-scoped, but not retroactive
 
-The two Template-encrypted Highly Confidential sub-labels (`All
-Employees`, `Internal Exception`) grant rights via the `{TenantDomain}`
+The Template-encrypted `Highly Confidential\All Employees` sub-label
+grants rights via the `{TenantDomain}`
 token in `EncryptionRightsDefinitions`. At run time the toolkit resolves
 this against your auto-discovered tenant identity (default verified
 domain, falling back to your initial `*.onmicrosoft.com`). Per Entra
@@ -171,12 +171,12 @@ The two HC sub-labels use **different rights bundles** by design:
 | Label | Bundle | Office co-authoring (rights side) | Copy / Print / Macros |
 |---|---|---|---|
 | `Highly Confidential\All Employees` | Co-Author (per-label override) | ✅ | ✅ |
-| `Highly Confidential\Internal Exception` | Reviewer (global default) | ❌ | ❌ |
+| `Highly Confidential\Specific People` | UserDefined (Do Not Forward — author picks recipients) | ❌ | ❌ |
 
-Co-Author adds `EXTRACT`, `PRINT`, `OBJMODEL` on top of Reviewer.
-OBJMODEL grants Office object-model access — necessary for macros and
-for Office simultaneous editing on encrypted files (but **not
-sufficient** for the latter; the tenant-wide `-EnableLabelCoAuthoring`
+Co-Author adds `EXTRACT`, `PRINT`, `OBJMODEL` on top of the global-default
+Reviewer bundle. OBJMODEL grants Office object-model access — necessary
+for macros and for Office simultaneous editing on encrypted files (but
+**not sufficient** for the latter; the tenant-wide `-EnableLabelCoAuthoring`
 switch must also be enabled — see §6 below).
 
 **This is a default change.** Older deployments used
@@ -200,15 +200,17 @@ access to previously-labelled files.
   `AuthenticatedUsers`) and document the decision. The toolkit refuses
   to silently fall back to that scope — if `{TenantDomain}` cannot be
   resolved, the labels module aborts with an actionable error.
-- The two UserDefined Specific People sub-labels are unaffected by this
+- The two UserDefined sub-labels (`Confidential\TrustedPeople`,
+  `Highly Confidential\Specific People`) are unaffected by this
   scope — the message / file author picks the recipients each time.
 
-### 2. `Highly Confidential\Specific People` (and `Confidential\Specific People`) prompt the user
+### 2. `Highly Confidential\Specific People` (and `Confidential\TrustedPeople`) prompt the user
 
-Both Specific People sub-labels apply UserDefined encryption: Outlook
-auto-applies Do Not Forward, and Word/Excel/PowerPoint ask the user to
-pick who can open the file. Most users have no idea what to do with
-that dialog and either cancel or grant overly broad rights.
+Both apply UserDefined encryption: Outlook auto-applies **Do Not Forward**
+on Specific People and **Encrypt-Only** (recipients can reshare) on
+Trusted People; Word/Excel/PowerPoint ask the user to pick who can open
+the file for both. Most users have no idea what to do with that dialog
+and either cancel or grant overly broad rights.
 
 **Mitigation.** Either don't publish these sub-labels to end users
 (neither is in `LabelPolicy.PublishedLabels` by default — good), or
@@ -223,8 +225,8 @@ Microsoft does not officially support flipping it back to `False`. You
 can apply labels to Groups / Teams / SPO sites freely from then on, but
 the *capability* is permanent.
 
-In addition, the 3 **published** labels (`General`,
-`Confidential\All Employees`, `Highly Confidential\All Employees`)
+In addition, the 4 **published** labels (`General \ Anyone (unrestricted)`,
+`Confidential\All Employees`, `Highly Confidential\All Employees`, `Public`)
 ship with container scope (`Site`, `UnifiedGroup`) in their
 `ContentType` so they are selectable when a user creates a new Team
 or M365 Group. The toolkit's adoption path uses UNION-not-replace:

@@ -311,7 +311,7 @@ $ConfirmPreference   = 'None'
 # Surfaced in the end-of-run HTML report and (eventually) in support logs.
 # Bump on each release. The runtime build suffix is the short Git SHA when
 # the script lives in a working tree -- fall back to '' in tarball deploys.
-$script:DeployVersion = '0.5.0'
+$script:DeployVersion = '1.2.0'
 try {
     $gitSha = & git -C $PSScriptRoot rev-parse --short HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $gitSha) {

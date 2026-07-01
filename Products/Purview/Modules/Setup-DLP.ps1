@@ -142,51 +142,50 @@ function Resolve-LabelByPath {
     }
 
     $childName = $parts[-1]
-    $child = $null
-    $maxLookupAttempts = 4
-    for ($la = 1; $la -le $maxLookupAttempts; $la++) {
-        $child = Get-Label -Identity $childName -ErrorAction SilentlyContinue
-        if ($child) { break }
-        if ($la -lt $maxLookupAttempts) {
-            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
-            Start-Sleep -Seconds 15
-        }
-    }
-    if ($child) {
-        $isSoftDeleted = $false
-        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
-        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
-        if ($isSoftDeleted) {
-            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by a DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels), or wait for the ~30-day purge."
-        }
-        return $child
-    }
 
-    # DisplayName fallback. Setup-SensitivityLabels.ps1 matches pre-existing
-    # labels by DisplayName (so a tenant where MOD Admin pre-created
-    # 'Highly Confidential' is left in place with a different internal Name).
-    # Get-Label -Identity only resolves Name/ImmutableId/Guid, so a Path that
-    # uses our configured internal Name will miss those adopted labels. Look
-    # up the configured DisplayName and search by that.
-    $cfgEntry = $null
-    if ($Config -and $Config.Labels) {
-        foreach ($_l in $Config.Labels) {
-            if ($_l.Name -eq $childName) {
-                $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
-                break
-            }
-            if ($_l.SubLabels) {
-                foreach ($_s in $_l.SubLabels) {
-                    if ($_s.Name -eq $childName) {
-                        $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
-                        break
-                    }
+    # Resolve WITHOUT sleeping first. Get-Label -Identity only matches
+    # Name/ImmutableId/Guid, so a Path that uses our configured internal Name
+    # MISSES adopted labels (Microsoft-default / wizard-created / modern-scheme)
+    # whose internal Name is a 'defa4170-...' GUID. The DisplayName fallback
+    # below catches those. Running both BEFORE any wait means adopted labels
+    # resolve on the first pass instead of after a 45s false 'IPPS propagation'
+    # loop. (See Design-Notes/2026-06-30-label-taxonomy-ms-default-adoption.md.)
+    $tryResolve = {
+        $hit = Get-Label -Identity $childName -ErrorAction SilentlyContinue
+        if ($hit) { return $hit }
+        $cfgEntry = $null
+        if ($Config -and $Config.Labels) {
+            foreach ($_l in $Config.Labels) {
+                if ($_l.Name -eq $childName) {
+                    $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null; BuiltInName = $_l.BuiltInName }
+                    break
                 }
-                if ($cfgEntry) { break }
+                if ($_l.SubLabels) {
+                    foreach ($_s in $_l.SubLabels) {
+                        if ($_s.Name -eq $childName) {
+                            $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName; BuiltInName = $_s.BuiltInName }
+                            break
+                        }
+                    }
+                    if ($cfgEntry) { break }
+                }
             }
         }
-    }
-    if ($cfgEntry) {
+        if (-not $cfgEntry) { return $null }
+
+        # Signature match (region/scheme-proof): adopt the Microsoft built-in label
+        # by its 'defa4170-...' Name regardless of DisplayName localization. Try the
+        # modern-scheme group form ('<id>Group') first so a parent path resolves the
+        # label GROUP; fall back to the base id (leaves + classic parents).
+        if ($cfgEntry.BuiltInName) {
+            $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName + 'Group') -ErrorAction SilentlyContinue
+            if (-not $sig) { $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName) -ErrorAction SilentlyContinue }
+            if ($sig -and -not (($sig.PSObject.Properties.Name -contains 'Mode' -and $sig.Mode -eq 'PendingDeletion') -or
+                                ($sig.PSObject.Properties.Name -contains 'Disabled' -and $sig.Disabled -eq $true))) {
+                Write-Host "    Label '$Path' resolved by Name signature (defa4170) (Id: $($sig.Guid), Name: $($sig.Name)) — adopted built-in label." -ForegroundColor DarkYellow
+                return $sig
+            }
+        }
         $tenantLabels = @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
             -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
                   ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
@@ -205,8 +204,33 @@ function Resolve-LabelByPath {
         }
         if ($byDisplay) {
             Write-Host "    Label '$Path' resolved by DisplayName '$($cfgEntry.DisplayName)' (Id: $($byDisplay.Guid), Name: $($byDisplay.Name)) — adopted-existing label." -ForegroundColor DarkYellow
-            return $byDisplay
         }
+        return $byDisplay
+    }
+
+    $child = & $tryResolve
+
+    # Only WAIT for IPPS propagation when the label genuinely isn't visible yet
+    # (e.g. a label this same apply-mode run just created). Never wait under
+    # -WhatIf: nothing was created, so a wait is pure dead time.
+    if (-not $child -and -not $WhatIfPreference) {
+        $maxLookupAttempts = 3
+        for ($la = 1; $la -le $maxLookupAttempts; $la++) {
+            Write-Host ("    Label '$childName' not visible yet (IPPS propagation). Waiting 15s (attempt $la/$maxLookupAttempts)...") -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 15
+            $child = & $tryResolve
+            if ($child) { break }
+        }
+    }
+
+    if ($child) {
+        $isSoftDeleted = $false
+        if ($child.PSObject.Properties.Name -contains 'Mode' -and $child.Mode -eq 'PendingDeletion') { $isSoftDeleted = $true }
+        if ($child.PSObject.Properties.Name -contains 'Disabled' -and $child.Disabled -eq $true)    { $isSoftDeleted = $true }
+        if ($isSoftDeleted) {
+            throw "Sensitivity label '$Path' is soft-deleted (Mode='$($child.Mode)') and cannot be referenced by a DLP rule. Run Setup-SensitivityLabels.ps1 first (it auto-renames tombstoned labels), or wait for the ~30-day purge."
+        }
+        return $child
     }
 
     if ($WhatIfPreference) {
@@ -267,6 +291,27 @@ foreach ($cfg in $Config.DlpPolicies) {
     foreach ($lp in $labelPathList) {
         $resolved = Resolve-LabelByPath -Path $lp
         $g = $resolved.Guid.ToString()
+
+        # -----------------------------------------------------------------
+        # GUARDRAIL (do not remove) — bind labels by their live GUID only.
+        # A sensitivity-label operand in a DLP rule MUST be the label's live
+        # tenant GUID. Microsoft's ContentContainsSensitiveInformation schema
+        # stores that GUID in BOTH the 'name' and 'id' fields of the label
+        # entry — i.e. the 'name' field is the GUID, NOT the friendly/display
+        # name. Binding a friendly name, the config Name, or a DisplayName here
+        # produces a rule that persists but NEVER matches (silent failure).
+        # We therefore assert the resolved value is a real GUID before use, so
+        # any future refactor that regresses to name-binding fails loudly.
+        # See Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
+        # -----------------------------------------------------------------
+        $parsedGuid = [guid]::Empty
+        if (-not [guid]::TryParse($g, [ref]$parsedGuid)) {
+            throw "DLP label-binding guardrail: LabelPath '$lp' resolved to '$g', which is not a GUID. A DLP rule must bind labels by their live tenant GUID (resolved from the label signature/Name/DisplayName), never by a friendly name. This is a code/config regression — see Skills/Purview/Setup-DLP.skill.md 'Label-binding guardrail'."
+        }
+        if ($parsedGuid -eq [guid]::Empty -and -not $WhatIfPreference) {
+            throw "DLP label-binding guardrail: LabelPath '$lp' resolved to an empty GUID outside -WhatIf. Setup-SensitivityLabels.ps1 must create the label before the DLP module runs. See Skills/Purview/Setup-DLP.skill.md 'Label-binding guardrail'."
+        }
+
         $resolvedLabelGuids += $g
         $resolvedLabels     += @{ Name = $resolved.Name; Guid = $g }
         Write-Verbose "  Resolved '$lp' to GUID $g"
@@ -400,6 +445,12 @@ foreach ($cfg in $Config.DlpPolicies) {
     # -------------------------------------------------------------------
     # Build OR-matched label list for the rule. Within a single group,
     # operator='Or' means "any of these labels triggers the rule".
+    # GUARDRAIL: 'name' MUST be the label GUID (Microsoft's
+    # ContentContainsSensitiveInformation schema). It is NOT the display or
+    # friendly name — the backend echoes the same GUID into an 'id' field on
+    # persist, which is why a stored rule shows name==id==GUID. Do NOT "fix"
+    # this to a human-readable name; that silently breaks enforcement.
+    # See Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
     $labelMatches = @()
     foreach ($g in $resolvedLabelGuids) {
         $labelMatches += @{ name = $g; type = 'Sensitivity' }
@@ -432,6 +483,10 @@ foreach ($cfg in $Config.DlpPolicies) {
         # ---------------------------------------------------------------
         $advLabels = @()
         foreach ($lbl in $resolvedLabels) {
+            # GUARDRAIL: Id is the live tenant GUID and is what enforcement keys
+            # off. Name carries the label's internal Name for portal readability
+            # only — never rely on it for matching. See the labels module and
+            # Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
             $advLabels += [ordered]@{
                 Name = $lbl.Name
                 Id   = $lbl.Guid

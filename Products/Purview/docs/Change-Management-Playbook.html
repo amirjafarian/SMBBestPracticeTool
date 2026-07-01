@@ -203,7 +203,7 @@
       <p class="sub">Labels are live; DLP only observes. Watch the signals before anything enforces.</p>
       <ul class="acts">
         <li><b>Day 1 AM:</b> check the helpdesk queue for Purview-related tickets.</li>
-        <li><b>Day 1:</b> confirm <code>General</code> is the Outlook default and <code>Confidential\AllEmployees</code> the Office default.</li>
+        <li><b>Day 1:</b> confirm <code>General \ Anyone (unrestricted)</code> is the Outlook default and <code>Confidential\AllEmployees</code> the Office default.</li>
         <li><b>Day 1–3:</b> pilot owner sends a labelled doc externally — confirm the hit shows in Activity Explorer (no block — simulation).</li>
         <li><b>Day 3:</b> review Activity Explorer for unexpected match patterns (often a customer process, not a bug).</li>
         <li><b>Day 5:</b> spot-check audit-log entries to confirm <code>UnifiedAuditLog</code> captures label events.</li>
@@ -278,8 +278,8 @@
       <p>The <code>{TenantDomain}</code> token scopes HC encryption rights to your tenant's users only (excludes external B2B guests). Tightening the template does <b>not</b> revoke access on files labelled earlier — owners must re-apply the label.</p>
     </div>
     <div class="sharp-card">
-      <h4>"Specific People" labels prompt the user</h4>
-      <p>The Specific People sub-labels use UserDefined encryption — the author picks recipients each time. Expect a prompt; it's by design.</p>
+      <h4>"Trusted People" / "Specific People" labels prompt the user</h4>
+      <p>The two UserDefined sub-labels (<code>Confidential\TrustedPeople</code>, <code>Highly Confidential\Specific People</code>) apply UserDefined encryption — the author picks recipients each time (Trusted People: Encrypt-Only, recipients can reshare; Specific People: Do Not Forward). Expect a prompt; it's by design.</p>
     </div>
     <div class="sharp-card risk">
       <h4>Co-authoring is a one-way switch</h4>

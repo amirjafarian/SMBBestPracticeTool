@@ -306,7 +306,7 @@
       <p class="use">Nothing is added to the file or email.</p>
     </div>
     <div class="lbl general">
-      <div class="head"><span class="dot"></span><span class="nm">General</span><span class="lvl">No protection</span></div>
+      <div class="head"><span class="dot"></span><span class="nm">General &mdash; Anyone (unrestricted)</span><span class="lvl">No protection</span></div>
       <p>Routine internal email and documents you might share with trusted external partners (vendors, customers under NDA).</p>
       <p class="use">Nothing is added to the file or email.</p>
       <span class="default-badge">Default for new emails</span>
@@ -546,6 +546,11 @@
   <details class="faq">
     <summary>Will I be unable to send any external email?</summary>
     <div class="body"><p>No. Only emails you have <strong>explicitly labelled</strong> <em>Confidential</em> or <em>Highly Confidential</em> are blocked externally. Routine <em>General</em> email flows normally &mdash; this is the majority of what you send.</p></div>
+  </details>
+
+  <details class="faq">
+    <summary>I attached a Confidential file to an email that was labelled General &mdash; why did the email's label change on its own?</summary>
+    <div class="body"><p>This is expected: "inherit label from attachments" is on by default. If an attachment carries a higher-priority label than the email, Outlook silently upgrades the email's label to match before it's sent &mdash; no prompt, no action needed from you. It's a safety net so a sensitive attachment can't leave under a lower-sensitivity email label.</p></div>
   </details>
 
   <details class="faq">
