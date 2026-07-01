@@ -102,6 +102,7 @@
         @{
             Name        = 'Public'
             DisplayName = 'Public'
+            BuiltInName = 'defa4170-0d19-0005-0001-bc88714345d2'  # MS built-in default (0001) - region/scheme-proof adoption key
             Tooltip     = 'Business data that is specifically prepared and approved for public consumption.'
             Color       = '#13A10E'
             Encrypt     = $false
@@ -110,39 +111,43 @@
         @{
             Name        = 'General'
             DisplayName = 'General'
+            BuiltInName = 'defa4170-0d19-0005-0002-bc88714345d2'  # MS built-in default (0002) - label GROUP in modern scheme
             Tooltip     = 'Business data that is not intended for public consumption. However, this can be shared with external partners, as required. Examples include a company internal telephone directory, organizational charts, internal standards, and most internal communication.'
             Color       = '#3A96DD'
             Encrypt     = $false
             ContentMark = $false
-            # Optional. Comma-separated `New-Label -ContentType` values.
-            # 'File, Email' (the IPPS default) is implied when omitted; we
-            # set it explicitly here only to add the container-scope bits
-            # ('Site' + 'UnifiedGroup') so this label is selectable in the
-            # Purview portal's Edit sensitivity label -> Scope page for
-            # Microsoft 365 Groups, Teams, and SharePoint sites. Without
-            # these bits a user creating a new Team cannot pick this label.
-            #
-            # The toolkit applies UNION-not-replace semantics on adoption:
-            # any extra scope a customer has manually added in the portal
-            # is preserved. Re-running the deploy is a no-op for this field
-            # when the live set already covers the desired set.
-            #
-            # Only the 3 PUBLISHED labels (this + Confidential\AllEmployees +
-            # HighlyConfidential\HCAllEmps — see LabelPolicy.PublishedLabels)
-            # carry container scope. The other labels stay File/Email-only
-            # because Microsoft Purview does not allow encrypted labels on
-            # containers and the unpublished parent/`Specific People`/
-            # `Internal Exception` labels are not in the user-visible picker.
-            #
-            # When -SkipContainerLabels is set on Deploy-PurviewBestPractice
-            # (or auto-detect cannot identify a BP / E5 / Purview Suite SKU),
-            # the 'Site' + 'UnifiedGroup' bits are stripped at deploy time
-            # and a one-line info message is logged per label.
-            ContentType = 'File, Email, Site, UnifiedGroup'
+            # General is a label GROUP (matches the Microsoft built-in default): a
+            # non-applicable container. Its assignable children are below; the
+            # published / email-default child carries the container scope
+            # ('Site' + 'UnifiedGroup') so new Teams / M365 Groups / SharePoint sites
+            # can be classified. -SkipContainerLabels strips those bits at deploy time.
+            SubLabels   = @(
+                @{
+                    Name        = 'GeneralAnyone'
+                    DisplayName = 'Anyone (unrestricted)'
+                    BuiltInName = 'defa4170-0d19-0005-0003-bc88714345d2'  # MS built-in default (0003)
+                    Tooltip     = 'Organization data that is not intended for public consumption but can be shared with external partners if appropriate. Examples include customer conversations that do not include sensitive info, or released marketing materials.'
+                    Color       = '#3A96DD'
+                    Encrypt     = $false
+                    ContentMark = $false
+                    # Published + Outlook email default. Carries container scope.
+                    ContentType = 'File, Email, Site, UnifiedGroup'
+                }
+                @{
+                    Name        = 'GeneralAllEmployees'
+                    DisplayName = 'All Employees (unrestricted)'
+                    BuiltInName = 'defa4170-0d19-0005-0004-bc88714345d2'  # MS built-in default (0004)
+                    Tooltip     = 'Organization data that is not intended for public consumption. If you need to share this content with external partners, confirm with other data owners that it is OK to share and then change the label to General \ Anyone (unrestricted).'
+                    Color       = '#3A96DD'
+                    Encrypt     = $false
+                    ContentMark = $false
+                }
+            )
         }
         @{
             Name        = 'Confidential'
             DisplayName = 'Confidential'
+            BuiltInName = 'defa4170-0d19-0005-0005-bc88714345d2'  # MS built-in default (0005)
             Tooltip     = 'Sensitive business data that could cause damage to the business if shared with unauthorized people. Examples include contracts, security reports, forecast summaries, and sales account data.'
             Color       = '#EAA300'
             Encrypt     = $false
@@ -153,6 +158,7 @@
                     # existing DLP rule LabelPath = 'Confidential/AllEmployees'.
                     Name        = 'AllEmployees'
                     DisplayName = 'All Employees'
+                    BuiltInName = 'defa4170-0d19-0005-0007-bc88714345d2'  # MS built-in default (0007)
                     Tooltip     = 'Confidential data shared internally with all employees. No encryption is applied; the label is informational and adds a footer marking.'
                     Color       = '#EAA300'
                     Encrypt     = $false
@@ -174,6 +180,7 @@
                     # Carries the encrypted (UserDefined / Outlook Do Not Forward) protection.
                     Name        = 'TrustedPeople'
                     DisplayName = 'Trusted People'
+                    BuiltInName = 'defa4170-0d19-0005-0008-bc88714345d2'  # MS built-in default (0008)
                     Tooltip     = 'Confidential data shared with specific trusted people inside or outside the organization. Encryption is applied; trusted recipients can reshare as needed (Outlook: Encrypt-Only).'
                     Color       = '#EAA300'
                     Encrypt     = $true
@@ -187,6 +194,7 @@
         @{
             Name        = 'HighlyConfidential'
             DisplayName = 'Highly Confidential'
+            BuiltInName = 'defa4170-0d19-0005-0009-bc88714345d2'  # MS built-in default (0009)
             Tooltip     = 'Very sensitive business data that would cause damage to the business if it was shared with unauthorized people. Examples include employee and customer information, passwords, source code, and pre-announced financial reports.'
             Color       = '#A4262C'
             Encrypt     = $false
@@ -196,6 +204,7 @@
                 @{
                     Name        = 'HCAllEmps'
                     DisplayName = 'All Employees'
+                    BuiltInName = 'defa4170-0d19-0005-000a-bc88714345d2'  # MS built-in default (000a)
                     Tooltip     = 'Highly confidential data with Co-Author rights for all users in this tenant only (view, edit, save, copy, print, allow macros, reply, forward). Data owners can track and revoke content.'
                     Color       = '#A4262C'
                     Encrypt     = $true
@@ -237,6 +246,7 @@
                 @{
                     Name        = 'HCSpecificPeople'
                     DisplayName = 'Specific People'
+                    BuiltInName = 'defa4170-0d19-0005-000b-bc88714345d2'  # MS built-in default (000b)
                     Tooltip     = 'Highly confidential data that requires protection and can be viewed only by people you specify and with the permission level you choose.'
                     Color       = '#A4262C'
                     Encrypt     = $true
@@ -309,12 +319,12 @@
         # document gets footer marking by default. Resolved by Name at
         # runtime; sub-label Names are tenant-unique so this resolves cleanly.
         DefaultLabel   = 'AllEmployees'
-        # Default applied label for EMAIL (Outlook). Set separately so users
-        # don't have to think about labelling routine internal email; only
-        # documents inherit the higher Confidential default. Mapped to the
-        # IPPS advanced setting `OutlookDefaultLabel`. Set to $null to omit
-        # an Outlook-specific default and fall back to DefaultLabel.
-        DefaultLabelForEmail = 'General'
+        # Default applied label for EMAIL (Outlook). General is now a label GROUP
+        # (non-applicable), so this points at its assignable child
+        # 'General \ Anyone (unrestricted)' (Name = 'GeneralAnyone'). Mapped to the
+        # IPPS advanced setting `OutlookDefaultLabel`. Set to $null to omit an
+        # Outlook-specific default and fall back to DefaultLabel.
+        DefaultLabelForEmail = 'GeneralAnyone'
         # Subset of label Names to PUBLISH to end users via this policy.
         # All labels in the Labels array are still CREATED in the tenant,
         # but only these are visible/applicable in clients. Sub-label Names
@@ -324,7 +334,7 @@
         # created.
         PublishedLabels = @(
             'Public'
-            'General'
+            'GeneralAnyone'  # General \ Anyone (unrestricted) - assignable email-default child
             'AllEmployees'   # Confidential \ All Employees
             'HCAllEmps'      # Highly Confidential \ All Employees
         )
@@ -340,6 +350,14 @@
         MandatoryLabelling = $true
         # Justification required when downgrading sensitivity.
         DowngradeJustification = $true
+        # "Inherit label from attachments": when a user sends an email that has
+        # labelled attachments, apply the highest-priority attachment label to the
+        # email. 'Automatic' applies it silently (the Purview "on" behaviour);
+        # 'Recommended' prompts the user; set to $null to leave the feature off.
+        # Requires the published labels to be scoped to both Files and Emails
+        # (the SMBTool published labels are). Maps to the IPPS label-policy advanced
+        # setting `AttachmentAction`.
+        AttachmentAction = 'Automatic'
     }
 
     # ----- DLP policies -----

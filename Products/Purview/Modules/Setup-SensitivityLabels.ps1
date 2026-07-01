@@ -240,20 +240,23 @@ $offlineDays = $Config.EncryptionOfflineAccessDays
 $allLabelsRaw = @(Get-Label -ErrorAction SilentlyContinue)
 
 # ---------------------------------------------------------------------------
-# Soft-delete tombstone detection + auto-rename.
+# Soft-delete tombstone detection + auto-rename (internal Name only).
 #
 # Remove-Label SOFT-deletes labels: they stay in Get-Label results with
-# Mode='PendingDeletion' for ~30 days, but the name is reserved (so
-# New-Label with the same name fails) AND the label cannot be updated
-# (Set-Label returns ErrorCommonComplianceRuleIsDeletedException).
-# Without this check the deploy silently ran Set-Label against tombstones,
-# every cmdlet failed, and the summary still reported OK.
+# Mode='PendingDeletion' for ~30 days. The internal NAME is reserved (New-Label
+# with the same Name fails) but the DISPLAYNAME is NOT reserved -- you can create
+# a new label with the same DisplayName while the old one is soft-deleted
+# (verified 2026-07-01). Without this check the deploy silently ran Set-Label
+# against tombstones, every cmdlet failed, and the summary still reported OK.
 #
-# When a tombstone blocks a configured label, we auto-rename it for this
-# run by appending '-v2' (or the next free 'vN' suffix). The mutation is
-# IN-MEMORY ONLY -- PurviewConfig.psd1 on disk is not changed. A remap is
-# also stashed on $Config.LabelNameRemap so Setup-DLP.ps1 can rewrite
-# LabelPath references like 'Confidential/AllEmployees'.
+# When a tombstone blocks a create-Name, we vary ONLY the internal Name for this
+# run (append the next free '-vN') and KEEP the user-visible DisplayName unchanged
+# -- no ' v2' shown to users. With defa4170-create the internal Name is the
+# BuiltInName signature, so the varied Name is invisible anyway. The mutation is
+# IN-MEMORY ONLY -- PurviewConfig.psd1 on disk is not changed. For any CUSTOM
+# label (no BuiltInName) whose config Name is varied, a remap is stashed on
+# $Config.LabelNameRemap so Setup-DLP.ps1 can rewrite LabelPath references;
+# built-in labels resolve via the BuiltInName signature and need no remap.
 # ---------------------------------------------------------------------------
 function Test-LabelSoftDeleted {
     param($Label)
@@ -265,34 +268,38 @@ function Test-LabelSoftDeleted {
 
 function Get-FreeVersionedName {
     <#
-        Find the lowest N >= 2 such that the slot 'BaseName-vN' (and matching
-        DisplayName 'BaseDisplayName vN') is not held by a TOMBSTONED label.
+        Find the lowest N >= 2 such that the internal Name slot 'BaseName-vN' is
+        not held by a TOMBSTONED label. ONLY the Name is checked — a soft-deleted
+        label does NOT reserve its DisplayName (verified: you can create a new label
+        with the same DisplayName while the old one is in PendingDeletion), so the
+        user-visible DisplayName is always kept unchanged.
 
         An existing ACTIVE label at the candidate slot is fine: the downstream
-        label-creation flow will discover it via Get-Label, run Test-Owned,
-        and either update it in place (toolkit-managed) or abort (foreign).
-        We only need to skip slots that are blocked by a soft-delete tombstone,
-        since tombstones reserve both Name and DisplayName but cannot be
-        updated or referenced.
+        label-creation flow will discover it via Get-Label, run Test-Owned, and
+        either update it in place (toolkit-managed) or abort (foreign). We only skip
+        slots blocked by a soft-delete tombstone.
     #>
     param(
         [Parameter(Mandatory)] [string] $BaseName,
-                               [string] $BaseDisplayName,
         [Parameter(Mandatory)] [array]  $AllLabels
     )
-    if (-not $BaseDisplayName) { $BaseDisplayName = $BaseName }
     for ($n = 2; $n -le 99; $n++) {
-        $candName    = "$BaseName-v$n"
-        $candDisplay = "$BaseDisplayName v$n"
-        $clashName    = $AllLabels | Where-Object { $_.Name        -eq $candName }    | Select-Object -First 1
-        $clashDisplay = $AllLabels | Where-Object { $_.DisplayName -eq $candDisplay } | Select-Object -First 1
-        $nameBlocked    = ($clashName    -and (Test-LabelSoftDeleted $clashName))
-        $displayBlocked = ($clashDisplay -and (Test-LabelSoftDeleted $clashDisplay))
-        if (-not $nameBlocked -and -not $displayBlocked) {
-            return [pscustomobject]@{ Name = $candName; DisplayName = $candDisplay }
+        $candName = "$BaseName-v$n"
+        $clash    = $AllLabels | Where-Object { $_.Name -eq $candName } | Select-Object -First 1
+        if (-not ($clash -and (Test-LabelSoftDeleted $clash))) {
+            return $candName
         }
     }
-    throw "Could not find a free '-vN' suffix for label '$BaseName' after 99 attempts. Edit PurviewConfig.psd1 manually."
+    throw "Could not find a free '-vN' suffix for label Name '$BaseName' after 99 attempts. Edit PurviewConfig.psd1 manually."
+}
+
+# The internal Name each configured label is CREATED with: the Microsoft
+# 'defa4170-...' BuiltInName when present (so blank tenants match Microsoft),
+# else the config Name. Tombstone detection/rename keys off this.
+function Get-LabelCreateName {
+    param($LabelDef)
+    if ($LabelDef.BuiltInName) { return [string]$LabelDef.BuiltInName }
+    return [string]$LabelDef.Name
 }
 
 # Build the list of config-defined names we will manage (parents + sub-labels).
@@ -304,9 +311,17 @@ foreach ($_lbl in $Config.Labels) {
     }
 }
 
-# Find tombstoned labels whose Name matches something we were going to manage.
+# The internal create-Names we manage (BuiltInName when set, else config Name) —
+# this is what a tombstone actually blocks, since we CREATE with these.
+$managedCreateNames = @()
+foreach ($_lbl in $Config.Labels) {
+    $managedCreateNames += (Get-LabelCreateName $_lbl)
+    foreach ($_sub in @($_lbl.SubLabels)) { if ($_sub) { $managedCreateNames += (Get-LabelCreateName $_sub) } }
+}
+
+# Find tombstoned labels whose Name matches a create-Name we manage.
 $tombstoned = @($allLabelsRaw | Where-Object {
-    $configuredLabelNames -contains $_.Name -and (Test-LabelSoftDeleted $_)
+    $managedCreateNames -contains $_.Name -and (Test-LabelSoftDeleted $_)
 })
 
 $labelNameRemap = @{}
@@ -319,26 +334,25 @@ if ($tombstoned.Count -gt 0) {
         $modeText = if ($t.PSObject.Properties.Name -contains 'Mode') { $t.Mode } else { 'Disabled' }
         Write-Host "      - '$($t.Name)' (Mode=$modeText)" -ForegroundColor Yellow
     }
-    Write-Host '    Auto-renaming affected labels with the next free -vN suffix for this run.' -ForegroundColor Yellow
-    Write-Host '    PurviewConfig.psd1 on disk is NOT modified; restore the original names by' -ForegroundColor DarkYellow
-    Write-Host '    waiting ~30 days for the tombstone to purge then re-running.'              -ForegroundColor DarkYellow
+    Write-Host '    Auto-renaming the internal Name only (next free -vN) for this run; the user-visible' -ForegroundColor Yellow
+    Write-Host '    DisplayName is kept UNCHANGED (a tombstone does not reserve the DisplayName).' -ForegroundColor DarkYellow
+    Write-Host '    PurviewConfig.psd1 on disk is NOT modified; the original Name is restored once the' -ForegroundColor DarkYellow
+    Write-Host '    ~30-day tombstone purges.' -ForegroundColor DarkYellow
 
     foreach ($lbl in $Config.Labels) {
-        if ($tombstonedNames -contains $lbl.Name) {
-            $bumped = Get-FreeVersionedName -BaseName $lbl.Name -BaseDisplayName $lbl.DisplayName -AllLabels $allLabelsRaw
-            Write-Host "      $($lbl.Name) -> $($bumped.Name)" -ForegroundColor Yellow
-            $labelNameRemap[$lbl.Name] = $bumped.Name
-            $lbl.Name        = $bumped.Name
-            $lbl.DisplayName = $bumped.DisplayName
+        $cn = Get-LabelCreateName $lbl
+        if ($tombstonedNames -contains $cn) {
+            $newName = Get-FreeVersionedName -BaseName $cn -AllLabels $allLabelsRaw
+            Write-Host "      $cn -> $newName  (DisplayName '$($lbl.DisplayName)' unchanged)" -ForegroundColor Yellow
+            if ($lbl.BuiltInName) { $lbl.BuiltInName = $newName } else { $lbl.Name = $newName; $labelNameRemap[$cn] = $newName }
         }
         foreach ($sub in @($lbl.SubLabels)) {
             if (-not $sub) { continue }
-            if ($tombstonedNames -contains $sub.Name) {
-                $bumped = Get-FreeVersionedName -BaseName $sub.Name -BaseDisplayName $sub.DisplayName -AllLabels $allLabelsRaw
-                Write-Host "      $($sub.Name) -> $($bumped.Name)" -ForegroundColor Yellow
-                $labelNameRemap[$sub.Name] = $bumped.Name
-                $sub.Name        = $bumped.Name
-                $sub.DisplayName = $bumped.DisplayName
+            $scn = Get-LabelCreateName $sub
+            if ($tombstonedNames -contains $scn) {
+                $newName = Get-FreeVersionedName -BaseName $scn -AllLabels $allLabelsRaw
+                Write-Host "      $scn -> $newName  (DisplayName '$($sub.DisplayName)' unchanged)" -ForegroundColor Yellow
+                if ($sub.BuiltInName) { $sub.BuiltInName = $newName } else { $sub.Name = $newName; $labelNameRemap[$scn] = $newName }
             }
         }
     }
@@ -400,7 +414,7 @@ try {
 $retentionCollisions = @()
 if (-not $retentionTagsLookupFailed -and $retentionTags.Count -gt 0) {
     $retentionTagNames = @($retentionTags | ForEach-Object { $_.Name })
-    $retentionCollisions = @($retentionTagNames | Where-Object { $configuredLabelNames -contains $_ })
+    $retentionCollisions = @($retentionTagNames | Where-Object { $managedCreateNames -contains $_ })
 }
 
 if ($retentionCollisions.Count -gt 0) {
@@ -485,18 +499,16 @@ if ($retentionCollisions.Count -gt 0) {
         foreach ($act in $actionable) {
             if ($act.Scope -eq 'Parent') {
                 $lbl = $act.Lbl
-                $bumped = Get-FreeVersionedName -BaseName $lbl.Name -BaseDisplayName $lbl.DisplayName -AllLabels $allLabelsRaw
-                Write-Host "      $($lbl.Name) -> $($bumped.Name)" -ForegroundColor Yellow
-                $labelNameRemap[$lbl.Name] = $bumped.Name
-                $lbl.Name        = $bumped.Name
-                $lbl.DisplayName = $bumped.DisplayName
+                $cn = Get-LabelCreateName $lbl
+                $newName = Get-FreeVersionedName -BaseName $cn -AllLabels $allLabelsRaw
+                Write-Host "      $cn -> $newName  (DisplayName '$($lbl.DisplayName)' unchanged)" -ForegroundColor Yellow
+                if ($lbl.BuiltInName) { $lbl.BuiltInName = $newName } else { $lbl.Name = $newName; $labelNameRemap[$cn] = $newName }
             } else {
                 $sub = $act.Sub
-                $bumped = Get-FreeVersionedName -BaseName $sub.Name -BaseDisplayName $sub.DisplayName -AllLabels $allLabelsRaw
-                Write-Host "      $($sub.Name) -> $($bumped.Name)" -ForegroundColor Yellow
-                $labelNameRemap[$sub.Name] = $bumped.Name
-                $sub.Name        = $bumped.Name
-                $sub.DisplayName = $bumped.DisplayName
+                $scn = Get-LabelCreateName $sub
+                $newName = Get-FreeVersionedName -BaseName $scn -AllLabels $allLabelsRaw
+                Write-Host "      $scn -> $newName  (DisplayName '$($sub.DisplayName)' unchanged)" -ForegroundColor Yellow
+                if ($sub.BuiltInName) { $sub.BuiltInName = $newName } else { $sub.Name = $newName; $labelNameRemap[$scn] = $newName }
             }
         }
 
@@ -546,6 +558,31 @@ function Get-LabelByName {
         'TopLevel' { $allLabels | Where-Object { -not $_.ParentId } }
         'Parent'   { $allLabels | Where-Object { $_.ParentId -eq $ParentId } }
         default    { $allLabels }
+    }
+
+    # Signature match (region/scheme-proof). If the configured label carries a
+    # BuiltInName (the Microsoft 'defa4170-0d19-0005-NNNN-bc88714345d2' default
+    # identifier), match the live label by that internal Name REGARDLESS of
+    # DisplayName localization (FR 'Confidentiel', DE 'Vertraulich', or even
+    # 'Specific' vs 'Specified People' across tenants). The modern-scheme migrated
+    # group appends 'Group' to the Name, so accept that suffixed form too. This
+    # runs before the Name/DisplayName match because it is the most reliable key.
+    $builtIn = $null
+    foreach ($_cl in $Config.Labels) {
+        if ($_cl.Name -eq $Name -and $_cl.BuiltInName) { $builtIn = [string]$_cl.BuiltInName; break }
+        if ($_cl.SubLabels) {
+            foreach ($_cs in $_cl.SubLabels) {
+                if ($_cs.Name -eq $Name -and $_cs.BuiltInName) { $builtIn = [string]$_cs.BuiltInName; break }
+            }
+            if ($builtIn) { break }
+        }
+    }
+    if ($builtIn) {
+        $bySig = $candidates | Where-Object {
+            $n = [string]$_.Name
+            ($n -eq $builtIn) -or ($n -eq ($builtIn + 'Group'))
+        } | Select-Object -First 1
+        if ($bySig) { return $bySig }
     }
 
     $byName = $candidates | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
@@ -1102,7 +1139,9 @@ function New-OrUpdate-Label {
     $idForOps = if ($existing) { $existing.Name } else { $LabelDef.Name }
 
     if ($existing) {
-        $matchedBy = if ($existing.Name -eq $LabelDef.Name) { 'Name' } else { 'DisplayName' }
+        $matchedBy = if ($existing.Name -eq $LabelDef.Name) { 'Name' }
+                     elseif ($LabelDef.BuiltInName -and ($existing.Name -eq [string]$LabelDef.BuiltInName -or $existing.Name -eq ([string]$LabelDef.BuiltInName + 'Group'))) { 'Name signature (defa4170)' }
+                     else { 'DisplayName' }
         if ($owned) {
             Write-Host "    = Found managed label '$($LabelDef.Name)' (matched by $matchedBy). Updating." -ForegroundColor DarkGray
         } elseif ($AdoptExisting) {
@@ -1117,16 +1156,23 @@ function New-OrUpdate-Label {
     $comment = "$tag $tooltip"
 
     if (-not $existing) {
+        # Create with the Microsoft built-in 'defa4170-...' Name when the configured
+        # label maps to a built-in default, so blank-tenant labels are byte-identical
+        # to Microsoft's defaults (and to adopted tenants) — multitenant tools that
+        # look up by the standard Name then work everywhere. Falls back to the config
+        # Name for any custom label without a BuiltInName.
+        $createName = if ($LabelDef.BuiltInName) { [string]$LabelDef.BuiltInName } else { [string]$LabelDef.Name }
+
         # Cross-scope Name-collision pre-check. IPPS enforces tenant-globally
-        # unique label Names, so if the configured Name collides with a live
-        # label in a DIFFERENT hierarchy scope (typically: configured top-level
-        # vs an existing sub-label of the same Name, common on tenants migrated
-        # to the modern label scheme or with Microsoft-default labels enabled),
-        # New-Label will fail with a cryptic message. Detect upfront and surface
-        # an actionable remediation, otherwise Pass 3 fails later with
-        # InvalidSubLabelPriorityException when the wrong object is reordered.
+        # unique label Names, so if the Name collides with a live label in a
+        # DIFFERENT hierarchy scope (typically: configured top-level vs an existing
+        # sub-label of the same Name, common on tenants migrated to the modern label
+        # scheme or with Microsoft-default labels enabled), New-Label will fail with
+        # a cryptic message. Detect upfront and surface an actionable remediation,
+        # otherwise Pass 3 fails later with InvalidSubLabelPriorityException when the
+        # wrong object is reordered.
         $callerWantsTopLevel = -not $ParentId
-        $nameCollision = $allLabels | Where-Object { $_.Name -eq $LabelDef.Name } | Select-Object -First 1
+        $nameCollision = $allLabels | Where-Object { $_.Name -eq $createName } | Select-Object -First 1
         if ($nameCollision) {
             $collisionIsSubLabel = [bool] $nameCollision.ParentId
             if ($callerWantsTopLevel -eq $collisionIsSubLabel) {
@@ -1151,7 +1197,7 @@ function New-OrUpdate-Label {
         if (-not $PSCmdlet.ShouldProcess($LabelDef.Name, 'New-Label')) { return $null }
 
         $newArgs = @{
-            Name        = $LabelDef.Name
+            Name        = $createName
             DisplayName = $LabelDef.DisplayName
             Tooltip     = $tooltip
             Comment     = $comment
@@ -1175,21 +1221,59 @@ function New-OrUpdate-Label {
         # NOT using -AlreadyExistsIsSuccess here because the catch block below
         # needs to inspect the message and extract the existing label's GUID for
         # the "Duplicate display name" recovery path.
+        # Modern label scheme: a parent that will own sub-labels MUST be created as
+        # a label GROUP (-IsLabelGroup), or sub-label creation fails with
+        # InvalidParentLabelInModernLabelSchemeException. Classic scheme REJECTS
+        # -IsLabelGroup. Branch on the detected (cached) scheme; on the first such
+        # parent, try -IsLabelGroup and fall back to a classic parent if rejected.
+        $isParentWithSubs = (-not $ParentId) -and [bool]$LabelDef.SubLabels
+        $useLabelGroup    = $isParentWithSubs -and ($script:tenantLabelScheme -ne 'Classic')
+
+        $createArgs = $newArgs
+        if ($useLabelGroup) {
+            # A label group is a non-applicable container -> omit ContentType.
+            $createArgs = @{
+                Name         = $newArgs.Name
+                DisplayName  = $newArgs.DisplayName
+                Tooltip      = $newArgs.Tooltip
+                Comment      = $newArgs.Comment
+                IsLabelGroup = $true
+            }
+            if ($newArgs.ContainsKey('AdvancedSettings')) { $createArgs['AdvancedSettings'] = $newArgs['AdvancedSettings'] }
+        }
+
         $err = @()
         try {
-            Invoke-WithTransientRetry -Description ("New-Label '$($LabelDef.Name)'") -Action {
-                New-Label @newArgs -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+            Invoke-WithTransientRetry -Description ("New-Label '$($LabelDef.Name)'$(if ($useLabelGroup) { ' (label group)' })") -Action {
+                New-Label @createArgs -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
             }
+            if ($useLabelGroup) { $script:tenantLabelScheme = 'Modern' }
         } catch {
             $err = @($_)
+            # -IsLabelGroup rejected -> classic scheme (or a module that doesn't
+            # support the parameter). Remember the scheme and recreate as a classic
+            # parent so the run can continue.
+            if ($useLabelGroup -and ($err[0].Exception.Message -match 'IsLabelGroup')) {
+                $script:tenantLabelScheme = 'Classic'
+                Write-Host "      ('$($LabelDef.Name)': tenant uses the classic label scheme; creating as a classic parent.)" -ForegroundColor DarkGray
+                $err = @()
+                try {
+                    Invoke-WithTransientRetry -Description ("New-Label '$($LabelDef.Name)' (classic parent)") -Action {
+                        New-Label @newArgs -ErrorAction Stop -WarningAction SilentlyContinue -Confirm:$false | Out-Null
+                    }
+                } catch {
+                    $err = @($_)
+                }
+            }
         }
 
         if ($err.Count -eq 0) {
-            $existing = Get-Label -Identity $LabelDef.Name -ErrorAction SilentlyContinue
+            $existing = Get-Label -Identity $createName -ErrorAction SilentlyContinue
             if ($existing) { $script:allLabels += $existing }
-            $idForOps = $LabelDef.Name
+            $idForOps = $createName
             $justCreated = $true
-            Write-Host "    + Created label '$($LabelDef.Name)'." -ForegroundColor Green
+            $createNote = if ($createName -ne $LabelDef.Name) { " (Name: $createName)" } else { '' }
+            Write-Host "    + Created label '$($LabelDef.Name)'$createNote." -ForegroundColor Green
         } else {
             $msg = $(Format-IPPSError $err[0])
 
@@ -1303,6 +1387,19 @@ function New-OrUpdate-Label {
                 Write-Warning "           Get-ComplianceTag | Where-Object Name -eq '$($LabelDef.Name)'"
                 Write-Warning "      2. Remove or rename it, OR change the Name in Products/Purview/Config/PurviewConfig.psd1, then re-run."
                 Write-Warning "    (The pre-flight retention-tag collision check would normally auto-rename this — check earlier output for a Get-ComplianceTag warning.)"
+                return $null
+            } elseif ($msg -match 'InvalidParentLabelInModernLabelScheme' -or $msg -match 'is not a label group') {
+                # Modern scheme: the parent exists as a REGULAR label (not a label
+                # group), so sub-labels cannot be created under it. Happens when the
+                # parent was created on an earlier run before scheme-branching, or was
+                # pre-created manually. The parent must be recreated as a label group.
+                $parentHint = if ($ParentId) {
+                    $pObj = $script:allLabels | Where-Object { $_.Guid -eq $ParentId } | Select-Object -First 1
+                    if ($pObj) { "'$($pObj.DisplayName)' (Name: $($pObj.Name), Id: $ParentId)" } else { "Id $ParentId" }
+                } else { '(unknown parent)' }
+                Write-Warning "    Failed to create sub-label '$($LabelDef.Name)': its parent $parentHint exists as a regular label, but this tenant uses the MODERN label scheme, where sub-labels require a label GROUP parent."
+                Write-Warning "    Remediation: in Purview Admin (https://purview.microsoft.com) delete the parent label $parentHint (it has no sub-labels yet), then re-run — the tool recreates it as a label group (-IsLabelGroup)."
+                Add-RunLogEntry -Module 'Setup-SensitivityLabels' -Action 'New-Label' -Target $LabelDef.DisplayName -Status 'Failed' -Detail "Modern-scheme parent is a regular label, not a label group. Delete parent $parentHint and re-run."
                 return $null
             } else {
                 Write-Warning "    Failed to create label '$($LabelDef.Name)': $msg"
@@ -2237,6 +2334,11 @@ if ($emailDefaultLabelObj) {
 }
 if ($policyCfg.MandatoryLabelling) { $advanced['Mandatory'] = 'True' }
 if ($policyCfg.DowngradeJustification) { $advanced['RequireDowngradeJustification'] = 'True' }
+# "Inherit label from attachments": when an email has labelled attachments, apply
+# the highest-priority attachment label to the email. 'Automatic' applies it
+# silently; 'Recommended' prompts the user. Requires labels scoped to Files + Emails
+# (our published labels are). Omitted/empty in config leaves the feature off.
+if ($policyCfg.AttachmentAction) { $advanced['AttachmentAction'] = [string]$policyCfg.AttachmentAction }
 
 if (-not $existingPolicy) {
     if ($PSCmdlet.ShouldProcess($policyCfg.Name, 'New-LabelPolicy (publish to All)')) {

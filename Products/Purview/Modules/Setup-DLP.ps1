@@ -157,13 +157,13 @@ function Resolve-LabelByPath {
         if ($Config -and $Config.Labels) {
             foreach ($_l in $Config.Labels) {
                 if ($_l.Name -eq $childName) {
-                    $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null }
+                    $cfgEntry = @{ DisplayName = $_l.DisplayName; IsSub = $false; ParentName = $null; ParentDisplayName = $null; BuiltInName = $_l.BuiltInName }
                     break
                 }
                 if ($_l.SubLabels) {
                     foreach ($_s in $_l.SubLabels) {
                         if ($_s.Name -eq $childName) {
-                            $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName }
+                            $cfgEntry = @{ DisplayName = $_s.DisplayName; IsSub = $true; ParentName = $_l.Name; ParentDisplayName = $_l.DisplayName; BuiltInName = $_s.BuiltInName }
                             break
                         }
                     }
@@ -172,6 +172,20 @@ function Resolve-LabelByPath {
             }
         }
         if (-not $cfgEntry) { return $null }
+
+        # Signature match (region/scheme-proof): adopt the Microsoft built-in label
+        # by its 'defa4170-...' Name regardless of DisplayName localization. Try the
+        # modern-scheme group form ('<id>Group') first so a parent path resolves the
+        # label GROUP; fall back to the base id (leaves + classic parents).
+        if ($cfgEntry.BuiltInName) {
+            $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName + 'Group') -ErrorAction SilentlyContinue
+            if (-not $sig) { $sig = Get-Label -Identity ([string]$cfgEntry.BuiltInName) -ErrorAction SilentlyContinue }
+            if ($sig -and -not (($sig.PSObject.Properties.Name -contains 'Mode' -and $sig.Mode -eq 'PendingDeletion') -or
+                                ($sig.PSObject.Properties.Name -contains 'Disabled' -and $sig.Disabled -eq $true))) {
+                Write-Host "    Label '$Path' resolved by Name signature (defa4170) (Id: $($sig.Guid), Name: $($sig.Name)) — adopted built-in label." -ForegroundColor DarkYellow
+                return $sig
+            }
+        }
         $tenantLabels = @(Get-Label -ErrorAction SilentlyContinue) | Where-Object {
             -not (($_.PSObject.Properties.Name -contains 'Mode' -and $_.Mode -eq 'PendingDeletion') -or
                   ($_.PSObject.Properties.Name -contains 'Disabled' -and $_.Disabled -eq $true))
