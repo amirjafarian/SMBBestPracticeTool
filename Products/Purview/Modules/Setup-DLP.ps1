@@ -291,6 +291,27 @@ foreach ($cfg in $Config.DlpPolicies) {
     foreach ($lp in $labelPathList) {
         $resolved = Resolve-LabelByPath -Path $lp
         $g = $resolved.Guid.ToString()
+
+        # -----------------------------------------------------------------
+        # GUARDRAIL (do not remove) — bind labels by their live GUID only.
+        # A sensitivity-label operand in a DLP rule MUST be the label's live
+        # tenant GUID. Microsoft's ContentContainsSensitiveInformation schema
+        # stores that GUID in BOTH the 'name' and 'id' fields of the label
+        # entry — i.e. the 'name' field is the GUID, NOT the friendly/display
+        # name. Binding a friendly name, the config Name, or a DisplayName here
+        # produces a rule that persists but NEVER matches (silent failure).
+        # We therefore assert the resolved value is a real GUID before use, so
+        # any future refactor that regresses to name-binding fails loudly.
+        # See Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
+        # -----------------------------------------------------------------
+        $parsedGuid = [guid]::Empty
+        if (-not [guid]::TryParse($g, [ref]$parsedGuid)) {
+            throw "DLP label-binding guardrail: LabelPath '$lp' resolved to '$g', which is not a GUID. A DLP rule must bind labels by their live tenant GUID (resolved from the label signature/Name/DisplayName), never by a friendly name. This is a code/config regression — see Skills/Purview/Setup-DLP.skill.md 'Label-binding guardrail'."
+        }
+        if ($parsedGuid -eq [guid]::Empty -and -not $WhatIfPreference) {
+            throw "DLP label-binding guardrail: LabelPath '$lp' resolved to an empty GUID outside -WhatIf. Setup-SensitivityLabels.ps1 must create the label before the DLP module runs. See Skills/Purview/Setup-DLP.skill.md 'Label-binding guardrail'."
+        }
+
         $resolvedLabelGuids += $g
         $resolvedLabels     += @{ Name = $resolved.Name; Guid = $g }
         Write-Verbose "  Resolved '$lp' to GUID $g"
@@ -424,6 +445,12 @@ foreach ($cfg in $Config.DlpPolicies) {
     # -------------------------------------------------------------------
     # Build OR-matched label list for the rule. Within a single group,
     # operator='Or' means "any of these labels triggers the rule".
+    # GUARDRAIL: 'name' MUST be the label GUID (Microsoft's
+    # ContentContainsSensitiveInformation schema). It is NOT the display or
+    # friendly name — the backend echoes the same GUID into an 'id' field on
+    # persist, which is why a stored rule shows name==id==GUID. Do NOT "fix"
+    # this to a human-readable name; that silently breaks enforcement.
+    # See Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
     $labelMatches = @()
     foreach ($g in $resolvedLabelGuids) {
         $labelMatches += @{ name = $g; type = 'Sensitivity' }
@@ -456,6 +483,10 @@ foreach ($cfg in $Config.DlpPolicies) {
         # ---------------------------------------------------------------
         $advLabels = @()
         foreach ($lbl in $resolvedLabels) {
+            # GUARDRAIL: Id is the live tenant GUID and is what enforcement keys
+            # off. Name carries the label's internal Name for portal readability
+            # only — never rely on it for matching. See the labels module and
+            # Skills/Purview/Setup-DLP.skill.md "Label-binding guardrail".
             $advLabels += [ordered]@{
                 Name = $lbl.Name
                 Id   = $lbl.Guid
